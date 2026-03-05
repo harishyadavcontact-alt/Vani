@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { narrationChunks } from '@/app/lib/narration'
 import type { NarrationTweet, SourceType } from '@/app/lib/types'
+import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 
 type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
+type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
 
 const rates = [1, 1.25, 1.5, 2]
 
@@ -18,7 +20,17 @@ export default function VaniPlayer() {
   const [state, setState] = useState<PlayerState>('IDLE')
   const [rate, setRate] = useState(1)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [composeState, setComposeState] = useState<ComposeState>('IDLE')
+  const [replyDraft, setReplyDraft] = useState('')
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
+
+  const speakMessage = useCallback((message: string) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const utter = new SpeechSynthesisUtterance(message)
+    utter.rate = rate
+    utterRef.current = utter
+    window.speechSynthesis.speak(utter)
+  }, [rate])
 
   const endpoint = useMemo(() => {
     if (source === 'home') return '/api/source/home'
@@ -94,6 +106,28 @@ export default function VaniPlayer() {
     setIndex((i) => Math.min(i + 1, tweets.length - 1))
   }, [tweets.length])
 
+  const saveDraftLocally = useCallback((text: string) => {
+    if (typeof window === 'undefined') return
+    const existing = JSON.parse(localStorage.getItem('vani:replyDrafts') ?? '[]') as Array<{ text: string; createdAt: string }>
+    existing.push({ text, createdAt: new Date().toISOString() })
+    localStorage.setItem('vani:replyDrafts', JSON.stringify(existing))
+  }, [])
+
+  const postReply = useCallback(async (text: string) => {
+    try {
+      const res = await fetch('/api/reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, inReplyTo: tweets[index]?.id ?? null }),
+      })
+      if (!res.ok) throw new Error('Reply API unavailable')
+      speakMessage('Reply sent.')
+    } catch {
+      saveDraftLocally(text)
+      speakMessage('Posting API unavailable. Saved draft locally instead.')
+    }
+  }, [index, saveDraftLocally, speakMessage, tweets])
+
   useEffect(() => {
     load().catch(() => setState('ERROR'))
   }, [load])
@@ -115,13 +149,54 @@ export default function VaniPlayer() {
     recognition.continuous = true
     recognition.onresult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase()
-      if (transcript.includes('pause')) pause()
-      if (transcript.includes('play') || transcript.includes('resume')) play()
-      if (transcript.includes('skip') || transcript.includes('next')) next()
+
+      if (composeState === 'DICTATING') {
+        setReplyDraft(transcript)
+        setComposeState('CONFIRMING')
+        speakMessage(`Draft captured. You said: ${transcript}. Say send to post or cancel to discard.`)
+        return
+      }
+
+      if (composeState === 'CONFIRMING') {
+        const confirmation = parseConfirmation(transcript)
+        if (confirmation === 'send') {
+          postReply(replyDraft).catch(() => undefined)
+          setComposeState('IDLE')
+          setReplyDraft('')
+        }
+        if (confirmation === 'cancel') {
+          setComposeState('IDLE')
+          setReplyDraft('')
+          speakMessage('Reply canceled.')
+        }
+        return
+      }
+
+      const intent = parseVoiceIntent(transcript)
+      if (!intent) return
+
+      if (intent.type === 'PAUSE') pause()
+      if (intent.type === 'PLAY') play()
+      if (intent.type === 'NEXT') next()
+      if (intent.type === 'SWITCH_SOURCE') {
+        setSource(intent.target)
+        speakMessage(`Switched source to ${intent.target}.`)
+      }
+      if (intent.type === 'REPLY') {
+        setComposeState('DICTATING')
+        if (intent.text) {
+          setReplyDraft(intent.text)
+          setComposeState('CONFIRMING')
+          speakMessage(`Draft captured. You said: ${intent.text}. Say send to post or cancel to discard.`)
+          return
+        }
+        setReplyDraft('')
+        speakMessage('Reply mode enabled. Please dictate your message.')
+      }
     }
     recognition.start()
     return () => recognition.stop()
-  }, [voiceEnabled, pause, play, next])
+  }, [voiceEnabled, pause, play, next, composeState, postReply, replyDraft, speakMessage])
 
   useEffect(() => {
     localStorage.setItem('vani:lastSource', source)
@@ -147,6 +222,7 @@ export default function VaniPlayer() {
 
       <div className="card">
         <div className="small">State: {state}</div>
+        <div className="small">Voice Reply: {composeState}{replyDraft ? ` — "${replyDraft}"` : ''}</div>
         <div className="controls" style={{ marginTop: '.5rem' }}>
           <button className="primary" onClick={play}>Play</button>
           <button onClick={pause}>Pause</button>
