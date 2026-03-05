@@ -3,27 +3,75 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { NarrationTweet, SourceType } from '@/app/lib/types'
 
-type FeedResponse = { items: NarrationTweet[] }
+type FeedResponse = { items: NarrationTweet[]; cursor?: string | null }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
+type SourceSession = {
+  queue: NarrationTweet[]
+  currentIndex: number
+  cursor?: string | null
+  lastPlayedItemId?: string | null
+}
+
+type SessionsMap = Record<string, SourceSession>
 
 const rates = [1, 1.25, 1.5, 2]
+const SESSIONS_STORAGE_KEY = 'vani:sourceSessions'
+const SELECTION_STORAGE_KEY = 'vani:sourceSelection'
+
+const emptySession = (): SourceSession => ({
+  queue: [],
+  currentIndex: 0,
+  cursor: null,
+  lastPlayedItemId: null,
+})
+
+const normalizeSession = (session: SourceSession): SourceSession => {
+  const safeIndex = session.queue.length ? Math.min(Math.max(session.currentIndex, 0), session.queue.length - 1) : 0
+  const activeItem = session.queue[safeIndex]
+  return {
+    queue: session.queue,
+    currentIndex: safeIndex,
+    cursor: session.cursor ?? null,
+    lastPlayedItemId: activeItem?.id ?? session.lastPlayedItemId ?? null,
+  }
+}
 
 export default function VaniPlayer() {
   const [source, setSource] = useState<SourceType>('home')
   const [listId, setListId] = useState('builders')
   const [handle, setHandle] = useState('openai')
-  const [tweets, setTweets] = useState<NarrationTweet[]>([])
-  const [index, setIndex] = useState(0)
+  const [sessions, setSessions] = useState<SessionsMap>({})
+  const [hydrated, setHydrated] = useState(false)
   const [state, setState] = useState<PlayerState>('IDLE')
   const [rate, setRate] = useState(1)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
+
+  const sessionKey = useMemo(() => {
+    if (source === 'home') return 'following'
+    if (source === 'list') return `lists:${listId}`
+    return 'curated'
+  }, [source, listId])
 
   const endpoint = useMemo(() => {
     if (source === 'home') return '/api/source/home'
     if (source === 'list') return `/api/source/list/${listId}`
     return `/api/source/user/${handle.replace('@', '')}`
   }, [source, listId, handle])
+
+  const currentSession = sessions[sessionKey] ?? emptySession()
+  const tweets = currentSession.queue
+  const index = currentSession.currentIndex
+
+  const updateCurrentSession = useCallback((updater: (session: SourceSession) => SourceSession) => {
+    setSessions((prev) => {
+      const existing = prev[sessionKey] ?? emptySession()
+      return {
+        ...prev,
+        [sessionKey]: normalizeSession(updater(existing)),
+      }
+    })
+  }, [sessionKey])
 
   const speakCurrent = useCallback(() => {
     const current = tweets[index]
@@ -34,21 +82,40 @@ export default function VaniPlayer() {
     const utter = new SpeechSynthesisUtterance(`From @${current.authorHandle}. ${current.text}`)
     utter.rate = rate
     utter.onend = () => {
-      setIndex((i) => i + 1)
+      updateCurrentSession((session) => ({
+        ...session,
+        currentIndex: Math.min(session.currentIndex + 1, Math.max(session.queue.length - 1, 0)),
+        lastPlayedItemId: current.id,
+      }))
     }
     utter.onerror = () => setState('ERROR')
     utterRef.current = utter
     window.speechSynthesis.speak(utter)
-  }, [tweets, index, rate])
+  }, [tweets, index, rate, updateCurrentSession])
 
   const load = useCallback(async () => {
     setState('LOADING')
     const res = await fetch(endpoint)
     const data = (await res.json()) as FeedResponse
-    setTweets(data.items)
-    setIndex(0)
+
+    updateCurrentSession((existing) => {
+      const recoveredIndex = existing.lastPlayedItemId
+        ? data.items.findIndex((item) => item.id === existing.lastPlayedItemId)
+        : -1
+      const nextIndex = recoveredIndex >= 0
+        ? recoveredIndex
+        : Math.min(existing.currentIndex, Math.max(data.items.length - 1, 0))
+      const currentItem = data.items[nextIndex]
+      return {
+        queue: data.items,
+        currentIndex: nextIndex,
+        cursor: data.cursor ?? existing.cursor ?? null,
+        lastPlayedItemId: currentItem?.id ?? existing.lastPlayedItemId ?? null,
+      }
+    })
+
     setState('PAUSED')
-  }, [endpoint])
+  }, [endpoint, updateCurrentSession])
 
   const play = useCallback(() => {
     if (!tweets.length) return
@@ -66,21 +133,55 @@ export default function VaniPlayer() {
     if (typeof window !== 'undefined') {
       window.speechSynthesis.cancel()
     }
-    setIndex((i) => Math.min(i + 1, tweets.length - 1))
-  }, [tweets.length])
+    updateCurrentSession((session) => {
+      const nextIndex = Math.min(session.currentIndex + 1, Math.max(session.queue.length - 1, 0))
+      return {
+        ...session,
+        currentIndex: nextIndex,
+        lastPlayedItemId: session.queue[nextIndex]?.id ?? session.lastPlayedItemId ?? null,
+      }
+    })
+  }, [updateCurrentSession])
 
   useEffect(() => {
-    load().catch(() => setState('ERROR'))
-  }, [load])
+    if (typeof window === 'undefined') return
+
+    try {
+      const savedSelection = window.localStorage.getItem(SELECTION_STORAGE_KEY)
+      if (savedSelection) {
+        const parsed = JSON.parse(savedSelection) as { source?: SourceType; listId?: string; handle?: string }
+        if (parsed.source) setSource(parsed.source)
+        if (parsed.listId) setListId(parsed.listId)
+        if (parsed.handle) setHandle(parsed.handle)
+      }
+    } catch {
+      // Ignore corrupt localStorage values.
+    }
+
+    try {
+      const savedSessions = window.localStorage.getItem(SESSIONS_STORAGE_KEY)
+      if (savedSessions) {
+        const parsed = JSON.parse(savedSessions) as SessionsMap
+        const normalized: SessionsMap = Object.fromEntries(
+          Object.entries(parsed).map(([key, value]) => [key, normalizeSession(value)])
+        )
+        setSessions(normalized)
+      }
+    } catch {
+      // Ignore corrupt localStorage values.
+    }
+
+    setHydrated(true)
+  }, [])
 
   useEffect(() => {
-    if (state !== 'PLAYING') return
-    if (index >= tweets.length) {
-      setState('PAUSED')
+    if (!hydrated) return
+    if (tweets.length) {
+      setState((existing) => (existing === 'IDLE' ? 'PAUSED' : existing))
       return
     }
-    speakCurrent()
-  }, [state, index, tweets.length, speakCurrent])
+    load().catch(() => setState('ERROR'))
+  }, [hydrated, tweets.length, load])
 
   useEffect(() => {
     if (!voiceEnabled || typeof window === 'undefined') return
@@ -99,9 +200,23 @@ export default function VaniPlayer() {
   }, [voiceEnabled, pause, play, next])
 
   useEffect(() => {
-    localStorage.setItem('vani:lastSource', source)
-    localStorage.setItem('vani:lastTweetIndex', String(index))
-  }, [source, index])
+    if (typeof window === 'undefined' || !hydrated) return
+    window.localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(sessions))
+  }, [sessions, hydrated])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !hydrated) return
+    window.localStorage.setItem(SELECTION_STORAGE_KEY, JSON.stringify({ source, listId, handle }))
+  }, [source, listId, handle, hydrated])
+
+  useEffect(() => {
+    if (state !== 'PLAYING') return
+    if (index >= tweets.length) {
+      setState('PAUSED')
+      return
+    }
+    speakCurrent()
+  }, [state, index, tweets.length, speakCurrent])
 
   return (
     <div className="card">
