@@ -1,12 +1,17 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { NarrationTweet, SourceType } from '@/app/lib/types'
+import type { NarrationTweet, SourceResponse, SourceType } from '@/app/lib/types'
 
-type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 
 const rates = [1, 1.25, 1.5, 2]
+
+const sourceLabels: Record<SourceType, string> = {
+  home: 'Following',
+  list: 'List',
+  user: 'User',
+}
 
 export default function VaniPlayer() {
   const [source, setSource] = useState<SourceType>('home')
@@ -17,6 +22,7 @@ export default function VaniPlayer() {
   const [state, setState] = useState<PlayerState>('IDLE')
   const [rate, setRate] = useState(1)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [notice, setNotice] = useState('')
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const endpoint = useMemo(() => {
@@ -24,6 +30,16 @@ export default function VaniPlayer() {
     if (source === 'list') return `/api/source/list/${listId}`
     return `/api/source/user/${handle.replace('@', '')}`
   }, [source, listId, handle])
+
+  const announceNotice = useCallback((message: string) => {
+    if (!message || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      return
+    }
+    const utter = new SpeechSynthesisUtterance(message)
+    utter.rate = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utter)
+  }, [])
 
   const speakCurrent = useCallback(() => {
     const current = tweets[index]
@@ -44,11 +60,28 @@ export default function VaniPlayer() {
   const load = useCallback(async () => {
     setState('LOADING')
     const res = await fetch(endpoint)
-    const data = (await res.json()) as FeedResponse
+    const data = (await res.json()) as SourceResponse
+
+    if (!data.canFetchForYou && data.fallbackSource && data.fallbackSource !== source) {
+      const fallbackLabel = sourceLabels[data.fallbackSource]
+      const fallbackMessage = `${data.statusMessages.fetchForYou} Switched to ${fallbackLabel}.`
+      setNotice(fallbackMessage)
+      announceNotice(fallbackMessage)
+      setSource(data.fallbackSource)
+      return
+    }
+
+    const unavailableActions: string[] = []
+    if (!data.canReply) unavailableActions.push(data.statusMessages.reply)
+    if (!data.canLike) unavailableActions.push(data.statusMessages.like)
+
+    const message = unavailableActions.length > 0 ? unavailableActions.join(' ') : data.statusMessages.source
+    setNotice(message)
+
     setTweets(data.items)
     setIndex(0)
     setState('PAUSED')
-  }, [endpoint])
+  }, [endpoint, source, announceNotice])
 
   const play = useCallback(() => {
     if (!tweets.length) return
@@ -119,6 +152,8 @@ export default function VaniPlayer() {
         {source === 'user' && <input value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="@handle" />}
         <button onClick={() => load().catch(() => setState('ERROR'))}>Refresh Feed</button>
       </div>
+
+      {notice && <p className="small">Notice: {notice}</p>}
 
       <div className="card">
         <div className="small">State: {state}</div>

@@ -1,5 +1,19 @@
 export type SourceType = 'home' | 'list' | 'user'
 
+export type SourceResponse = {
+  items: NarrationTweet[]
+  canReply: boolean
+  canLike: boolean
+  canFetchForYou: boolean
+  fallbackSource: SourceType | null
+  statusMessages: {
+    source: string
+    reply: string
+    like: string
+    fetchForYou: string
+  }
+}
+
 export type NarrationTweet = {
   id: string
   authorHandle: string
