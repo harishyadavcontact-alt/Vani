@@ -1,4 +1,4 @@
-export type SourceType = 'home' | 'list' | 'user'
+export type SourceType = 'curated' | 'home' | 'list' | 'user'
 
 export type NarrationTweet = {
   id: string
