@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { narrationChunks } from '@/app/lib/narration'
 import type { NarrationTweet, SourceType } from '@/app/lib/types'
 
 type FeedResponse = { items: NarrationTweet[] }
@@ -25,21 +26,45 @@ export default function VaniPlayer() {
     return `/api/source/user/${handle.replace('@', '')}`
   }, [source, listId, handle])
 
+  const speakChunks = useCallback((chunks: string[], onComplete: () => void) => {
+    if (typeof window === 'undefined' || !chunks.length) {
+      onComplete()
+      return
+    }
+
+    const speakAtIndex = (chunkIndex: number) => {
+      const text = chunks[chunkIndex]
+      if (!text) {
+        onComplete()
+        return
+      }
+
+      const utter = new SpeechSynthesisUtterance(text)
+      utter.rate = rate
+      utter.onend = () => speakAtIndex(chunkIndex + 1)
+      utter.onerror = () => setState('ERROR')
+      utterRef.current = utter
+      window.speechSynthesis.speak(utter)
+    }
+
+    speakAtIndex(0)
+  }, [rate])
+
   const speakCurrent = useCallback(() => {
     const current = tweets[index]
     if (!current || typeof window === 'undefined' || !('speechSynthesis' in window)) {
       return
     }
+
     window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(`From @${current.authorHandle}. ${current.text}`)
-    utter.rate = rate
-    utter.onend = () => {
+
+    const normalizedTweetChunks = narrationChunks(current.text)
+    const narration = [`From at ${current.authorHandle}.`, ...normalizedTweetChunks]
+
+    speakChunks(narration, () => {
       setIndex((i) => i + 1)
-    }
-    utter.onerror = () => setState('ERROR')
-    utterRef.current = utter
-    window.speechSynthesis.speak(utter)
-  }, [tweets, index, rate])
+    })
+  }, [tweets, index, speakChunks])
 
   const load = useCallback(async () => {
     setState('LOADING')
