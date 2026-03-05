@@ -9,17 +9,29 @@ Vani is a fast-ship MVP for turning X-style feeds into an audio stream using bro
 - Playback engine: Play, Pause, Next, speed controls
 - Voice commands (optional): "play", "pause", "skip"
 - API route skeleton matching MVP architecture
+- Free demo auth mode via `DEMO_MODE=true` (no paid API setup required)
 
-## Run locally
+## Run locally (no paid/API setup)
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
-Open http://localhost:3000
+Then set this in `.env.local`:
+```bash
+DEMO_MODE=true
+```
+
+Open http://localhost:3000 and choose:
+- **Continue in Demo** to use guest mode locally.
+- **Connect X (optional)** to simulate a connected X identity in demo mode.
+
+When `DEMO_MODE` is not enabled, X OAuth endpoints remain stubs for real credential wiring.
 
 ## API routes
 - `GET /api/me`
+- `GET /api/auth/demo`
 - `GET /api/auth/login`
 - `GET /api/auth/callback`
 - `GET /api/source/home`

@@ -8,7 +8,14 @@ export default function Home() {
           <h1 style={{ marginBottom: '.2rem' }}>Vani</h1>
           <p className="tag">listen to the universe..</p>
         </div>
-        <button className="primary">Sign in with X (stub)</button>
+        <div style={{ display: 'flex', gap: '.5rem', flexWrap: 'wrap' }}>
+          <a className="primary" href="/api/auth/demo">
+            Continue in Demo
+          </a>
+          <a className="primary" href="/api/auth/login">
+            Connect X (optional)
+          </a>
+        </div>
       </section>
 
       <VaniPlayer />
