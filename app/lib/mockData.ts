@@ -1,4 +1,5 @@
 import { NarrationTweet } from './types'
+import { getCuratedTweets } from './curated'
 
 const now = new Date().toISOString()
 
@@ -18,6 +19,8 @@ export const LIST_TWEETS: Record<string, NarrationTweet[]> = {
     { id: 'a2', authorHandle: 'goodside', authorName: 'Riley Goodside', text: 'Prompt engineering is mostly clear communication.', createdAt: now }
   ]
 }
+
+export const CURATED_TWEETS: NarrationTweet[] = getCuratedTweets()
 
 export function userTweets(handle: string): NarrationTweet[] {
   return [

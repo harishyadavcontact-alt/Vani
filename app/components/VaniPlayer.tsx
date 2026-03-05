@@ -9,7 +9,7 @@ type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 const rates = [1, 1.25, 1.5, 2]
 
 export default function VaniPlayer() {
-  const [source, setSource] = useState<SourceType>('home')
+  const [source, setSource] = useState<SourceType>('curated')
   const [listId, setListId] = useState('builders')
   const [handle, setHandle] = useState('openai')
   const [tweets, setTweets] = useState<NarrationTweet[]>([])
@@ -20,6 +20,7 @@ export default function VaniPlayer() {
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const endpoint = useMemo(() => {
+    if (source === 'curated') return '/api/source/curated'
     if (source === 'home') return '/api/source/home'
     if (source === 'list') return `/api/source/list/${listId}`
     return `/api/source/user/${handle.replace('@', '')}`
@@ -107,6 +108,7 @@ export default function VaniPlayer() {
     <div className="card">
       <h2>Tune-In</h2>
       <div className="source-grid">
+        <button className={source === 'curated' ? 'primary' : ''} onClick={() => setSource('curated')}>Curated</button>
         <button className={source === 'home' ? 'primary' : ''} onClick={() => setSource('home')}>Home Timeline</button>
         <button className={source === 'list' ? 'primary' : ''} onClick={() => setSource('list')}>List</button>
         <button className={source === 'user' ? 'primary' : ''} onClick={() => setSource('user')}>User</button>
