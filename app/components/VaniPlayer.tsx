@@ -8,6 +8,12 @@ import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
+type Mode = 'feed' | 'thread'
+type FeedSessionSnapshot = {
+  tweets: NarrationTweet[]
+  index: number
+  state: PlayerState
+}
 
 const rates = [1, 1.25, 1.5, 2]
 
@@ -22,7 +28,11 @@ export default function VaniPlayer() {
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [composeState, setComposeState] = useState<ComposeState>('IDLE')
   const [replyDraft, setReplyDraft] = useState('')
+  const [mode, setMode] = useState<Mode>('feed')
+  const [threadRootTweetId, setThreadRootTweetId] = useState<string | null>(null)
+  const [threadReplyTarget, setThreadReplyTarget] = useState<NarrationTweet | null>(null)
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
+  const feedSessionRef = useRef<FeedSessionSnapshot | null>(null)
 
   const speakMessage = useCallback((message: string) => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
@@ -72,12 +82,13 @@ export default function VaniPlayer() {
     window.speechSynthesis.cancel()
 
     const normalizedTweetChunks = narrationChunks(current.text)
-    const narration = [`From at ${current.authorHandle}.`, ...normalizedTweetChunks]
+    const preface = mode === 'thread' ? `Thread reply ${index + 1}. From at ${current.authorHandle}.` : `From at ${current.authorHandle}.`
+    const narration = [preface, ...normalizedTweetChunks]
 
     speakChunks(narration, () => {
       setIndex((i) => i + 1)
     })
-  }, [tweets, index, speakChunks])
+  }, [tweets, index, mode, speakChunks])
 
   const load = useCallback(async () => {
     setState('LOADING')
@@ -86,6 +97,10 @@ export default function VaniPlayer() {
     setTweets(data.items)
     setIndex(0)
     setState('PAUSED')
+    setMode('feed')
+    setThreadRootTweetId(null)
+    setThreadReplyTarget(null)
+    feedSessionRef.current = null
   }, [endpoint])
 
   const play = useCallback(() => {
@@ -107,6 +122,89 @@ export default function VaniPlayer() {
     setIndex((i) => Math.min(i + 1, tweets.length - 1))
   }, [tweets.length])
 
+  const openThread = useCallback(async () => {
+    const current = tweets[index]
+    if (!current) {
+      speakMessage('No tweet selected to open thread.')
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      window.speechSynthesis.cancel()
+    }
+
+    const feedSnapshot: FeedSessionSnapshot = {
+      tweets,
+      index,
+      state,
+    }
+
+    setState('LOADING')
+    try {
+      const res = await fetch(`/api/thread/${current.id}`)
+      if (!res.ok) throw new Error('Thread API unavailable')
+      const data = (await res.json()) as FeedResponse
+      if (!data.items.length) {
+        setState(feedSnapshot.state)
+        speakMessage('No replies found for this thread.')
+        return
+      }
+
+      feedSessionRef.current = feedSnapshot
+      setMode('thread')
+      setThreadRootTweetId(current.id)
+      setThreadReplyTarget(data.items[0] ?? null)
+      setTweets(data.items)
+      setIndex(0)
+      setState('PLAYING')
+      speakMessage('Thread opened. Available commands are next reply, reply to this, and back to feed.')
+    } catch {
+      setState(feedSnapshot.state)
+      speakMessage('Unable to open thread right now.')
+    }
+  }, [index, speakMessage, state, tweets])
+
+  const exitThreadMode = useCallback(() => {
+    const snapshot = feedSessionRef.current
+    if (!snapshot) {
+      setMode('feed')
+      setThreadRootTweetId(null)
+      setThreadReplyTarget(null)
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      window.speechSynthesis.cancel()
+    }
+
+    setMode('feed')
+    setThreadRootTweetId(null)
+    setThreadReplyTarget(null)
+    setTweets(snapshot.tweets)
+    setIndex(snapshot.index)
+    setState(snapshot.state)
+    feedSessionRef.current = null
+    speakMessage('Returned to feed.')
+  }, [speakMessage])
+
+  const nextReply = useCallback(() => {
+    if (mode !== 'thread') {
+      speakMessage('Open a thread first.')
+      return
+    }
+
+    if (typeof window !== 'undefined') {
+      window.speechSynthesis.cancel()
+    }
+
+    setIndex((i) => {
+      const nextIndex = Math.min(i + 1, tweets.length - 1)
+      setThreadReplyTarget(tweets[nextIndex] ?? null)
+      return nextIndex
+    })
+    setState('PLAYING')
+  }, [mode, speakMessage, tweets])
+
   const saveDraftLocally = useCallback((text: string) => {
     if (typeof window === 'undefined') return
     const existing = JSON.parse(localStorage.getItem('vani:replyDrafts') ?? '[]') as Array<{ text: string; createdAt: string }>
@@ -115,11 +213,13 @@ export default function VaniPlayer() {
   }, [])
 
   const postReply = useCallback(async (text: string) => {
+    const inReplyTo = threadReplyTarget?.id ?? tweets[index]?.id ?? threadRootTweetId ?? null
+
     try {
       const res = await fetch('/api/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, inReplyTo: tweets[index]?.id ?? null }),
+        body: JSON.stringify({ text, inReplyTo }),
       })
       if (!res.ok) throw new Error('Reply API unavailable')
       speakMessage('Reply sent.')
@@ -127,11 +227,17 @@ export default function VaniPlayer() {
       saveDraftLocally(text)
       speakMessage('Posting API unavailable. Saved draft locally instead.')
     }
-  }, [index, saveDraftLocally, speakMessage, tweets])
+  }, [index, saveDraftLocally, speakMessage, threadReplyTarget, threadRootTweetId, tweets])
 
   useEffect(() => {
     load().catch(() => setState('ERROR'))
   }, [load])
+
+  useEffect(() => {
+    if (mode === 'thread') {
+      setThreadReplyTarget(tweets[index] ?? null)
+    }
+  }, [index, mode, tweets])
 
   useEffect(() => {
     if (state !== 'PLAYING') return
@@ -179,6 +285,20 @@ export default function VaniPlayer() {
       if (intent.type === 'PAUSE') pause()
       if (intent.type === 'PLAY') play()
       if (intent.type === 'NEXT') next()
+      if (intent.type === 'OPEN_THREAD') {
+        openThread().catch(() => undefined)
+      }
+      if (intent.type === 'NEXT_REPLY') {
+        nextReply()
+      }
+      if (intent.type === 'BACK_TO_FEED') {
+        exitThreadMode()
+      }
+      if (intent.type === 'REPLY_TO_THIS') {
+        setComposeState('DICTATING')
+        setReplyDraft('')
+        speakMessage('Replying to current thread item. Please dictate your message.')
+      }
       if (intent.type === 'SWITCH_SOURCE') {
         setSource(intent.target)
         speakMessage(`Switched source to ${intent.target}.`)
@@ -197,7 +317,7 @@ export default function VaniPlayer() {
     }
     recognition.start()
     return () => recognition.stop()
-  }, [voiceEnabled, pause, play, next, composeState, postReply, replyDraft, speakMessage])
+  }, [voiceEnabled, pause, play, next, openThread, nextReply, exitThreadMode, composeState, postReply, replyDraft, speakMessage])
 
   useEffect(() => {
     localStorage.setItem('vani:lastSource', source)
@@ -224,11 +344,15 @@ export default function VaniPlayer() {
 
       <div className="card">
         <div className="small">State: {state}</div>
+        <div className="small">Mode: {mode}{threadRootTweetId ? ` (${threadRootTweetId})` : ''}</div>
         <div className="small">Voice Reply: {composeState}{replyDraft ? ` — "${replyDraft}"` : ''}</div>
         <div className="controls" style={{ marginTop: '.5rem' }}>
           <button className="primary" onClick={play}>Play</button>
           <button onClick={pause}>Pause</button>
           <button onClick={next}>Next</button>
+          <button onClick={() => openThread().catch(() => setState('ERROR'))}>Open Thread</button>
+          <button onClick={nextReply}>Next Reply</button>
+          <button onClick={exitThreadMode}>Back to Feed</button>
           <select value={rate} onChange={(e) => setRate(Number(e.target.value))}>
             {rates.map((r) => <option key={r} value={r}>{r}x</option>)}
           </select>

@@ -22,6 +22,25 @@ export const LIST_TWEETS: Record<string, NarrationTweet[]> = {
 
 export const CURATED_TWEETS: NarrationTweet[] = getCuratedTweets()
 
+export const THREAD_TWEETS: Record<string, NarrationTweet[]> = {
+  h1: [
+    { id: 'h1-r1', authorHandle: 'readwise', authorName: 'Readwise', text: 'And if you annotate as you read, you compound your understanding faster.', createdAt: now },
+    { id: 'h1-r2', authorHandle: 'naval', authorName: 'Naval', text: 'The highest ROI habit is learning consistently over years.', createdAt: now }
+  ],
+  h2: [
+    { id: 'h2-r1', authorHandle: 'levelsio', authorName: 'Pieter Levels', text: 'Feedback loops from users beat perfect planning every time.', createdAt: now },
+    { id: 'h2-r2', authorHandle: 'indiehackers', authorName: 'Indie Hackers', text: 'Tiny launches create momentum and useful accountability.', createdAt: now }
+  ],
+  l1: [
+    { id: 'l1-r1', authorHandle: 'paulg', authorName: 'Paul Graham', text: 'Most startup advice is timing advice in disguise.', createdAt: now },
+    { id: 'l1-r2', authorHandle: 'sama', authorName: 'Sam Altman', text: 'Speed turns unknowns into knowns faster than meetings do.', createdAt: now }
+  ]
+}
+
+export function threadTweets(tweetId: string): NarrationTweet[] {
+  return THREAD_TWEETS[tweetId] ?? []
+}
+
 export function userTweets(handle: string): NarrationTweet[] {
   return [
     { id: `${handle}-1`, authorHandle: handle, authorName: handle, text: `Hello from @${handle}. This is your personalized Vani stream.`, createdAt: now },
