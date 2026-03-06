@@ -5,11 +5,37 @@ import { narrationChunks } from '@/app/lib/narration'
 import type { NarrationTweet, SourceType } from '@/app/lib/types'
 import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 
-type FeedResponse = { items: NarrationTweet[] }
+type FeedResponse = { items: NarrationTweet[]; cursor?: string | null }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
+type SourceQueueState = {
+  cursor: string | null
+  queue: NarrationTweet[]
+  currentIndex: number
+  lastPlayedTweetId: string | null
+  lastUpdatedAt: string
+}
+
+type QueueStateBySource = Partial<Record<SourceType, SourceQueueState>>
 
 const rates = [1, 1.25, 1.5, 2]
+const queueStorageKey = 'vani:queueStateBySource'
+const validSources: SourceType[] = ['curated', 'home', 'list', 'user']
+
+const createQueueState = (
+  queue: NarrationTweet[],
+  currentIndex: number,
+  cursor: string | null = null,
+): SourceQueueState => {
+  const safeIndex = queue.length ? Math.min(Math.max(currentIndex, 0), queue.length - 1) : 0
+  return {
+    cursor,
+    queue,
+    currentIndex: safeIndex,
+    lastPlayedTweetId: queue[safeIndex]?.id ?? null,
+    lastUpdatedAt: new Date().toISOString(),
+  }
+}
 
 export default function VaniPlayer() {
   const [source, setSource] = useState<SourceType>('curated')
@@ -17,6 +43,7 @@ export default function VaniPlayer() {
   const [handle, setHandle] = useState('openai')
   const [tweets, setTweets] = useState<NarrationTweet[]>([])
   const [index, setIndex] = useState(0)
+  const [queueStateBySource, setQueueStateBySource] = useState<QueueStateBySource>({})
   const [state, setState] = useState<PlayerState>('IDLE')
   const [rate, setRate] = useState(1)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
@@ -83,10 +110,15 @@ export default function VaniPlayer() {
     setState('LOADING')
     const res = await fetch(endpoint)
     const data = (await res.json()) as FeedResponse
-    setTweets(data.items)
-    setIndex(0)
+    const nextQueueState = createQueueState(data.items, 0, data.cursor ?? null)
+    setTweets(nextQueueState.queue)
+    setIndex(nextQueueState.currentIndex)
+    setQueueStateBySource((prev) => ({
+      ...prev,
+      [source]: nextQueueState,
+    }))
     setState('PAUSED')
-  }, [endpoint])
+  }, [endpoint, source])
 
   const play = useCallback(() => {
     if (!tweets.length) return
@@ -130,8 +162,59 @@ export default function VaniPlayer() {
   }, [index, saveDraftLocally, speakMessage, tweets])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const rawPersistedState = localStorage.getItem(queueStorageKey)
+    if (rawPersistedState) {
+      try {
+        const parsedState = JSON.parse(rawPersistedState) as QueueStateBySource
+        setQueueStateBySource(parsedState)
+      } catch {
+        localStorage.removeItem(queueStorageKey)
+      }
+    }
+
+    const storedSource = localStorage.getItem('vani:lastSource') as SourceType | null
+    if (storedSource && validSources.includes(storedSource)) {
+      setSource(storedSource)
+    }
+  }, [])
+
+  useEffect(() => {
+    const currentSourceState = queueStateBySource[source]
+    if (currentSourceState) {
+      setTweets(currentSourceState.queue)
+      setIndex(currentSourceState.currentIndex)
+      setState('PAUSED')
+      return
+    }
+
     load().catch(() => setState('ERROR'))
-  }, [load])
+  }, [source, queueStateBySource, load])
+
+  useEffect(() => {
+    setQueueStateBySource((prev) => {
+      const existing = prev[source]
+      if (!tweets.length && !existing) return prev
+
+      const nextQueueState = createQueueState(tweets, index, existing?.cursor ?? null)
+      const unchanged = existing
+        && existing.currentIndex === nextQueueState.currentIndex
+        && existing.lastPlayedTweetId === nextQueueState.lastPlayedTweetId
+        && existing.queue.length === nextQueueState.queue.length
+      if (unchanged) return prev
+
+      return {
+        ...prev,
+        [source]: nextQueueState,
+      }
+    })
+  }, [source, tweets, index])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    localStorage.setItem(queueStorageKey, JSON.stringify(queueStateBySource))
+  }, [queueStateBySource])
 
   useEffect(() => {
     if (state !== 'PLAYING') return
@@ -200,6 +283,7 @@ export default function VaniPlayer() {
   }, [voiceEnabled, pause, play, next, composeState, postReply, replyDraft, speakMessage])
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
     localStorage.setItem('vani:lastSource', source)
     localStorage.setItem('vani:lastTweetIndex', String(index))
   }, [source, index])
