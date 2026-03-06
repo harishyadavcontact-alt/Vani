@@ -36,9 +36,10 @@ export function parseVoiceIntent(transcript: string): VoiceIntent | null {
   return null
 }
 
-export function parseConfirmation(transcript: string): 'send' | 'cancel' | null {
+export function parseConfirmation(transcript: string): 'send' | 'edit' | 'cancel' | null {
   const normalized = normalize(transcript)
   if (/\bsend\b/.test(normalized)) return 'send'
+  if (/\bedit\b/.test(normalized)) return 'edit'
   if (/\bcancel\b/.test(normalized)) return 'cancel'
   return null
 }

@@ -7,7 +7,7 @@ import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 
 type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
-type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
+type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING' | 'EDITING'
 
 const rates = [1, 1.25, 1.5, 2]
 
@@ -22,6 +22,7 @@ export default function VaniPlayer() {
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [composeState, setComposeState] = useState<ComposeState>('IDLE')
   const [replyDraft, setReplyDraft] = useState('')
+  const [replyError, setReplyError] = useState<string | null>(null)
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const speakMessage = useCallback((message: string) => {
@@ -115,18 +116,56 @@ export default function VaniPlayer() {
   }, [])
 
   const postReply = useCallback(async (text: string) => {
-    try {
-      const res = await fetch('/api/reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, inReplyTo: tweets[index]?.id ?? null }),
-      })
-      if (!res.ok) throw new Error('Reply API unavailable')
-      speakMessage('Reply sent.')
-    } catch {
-      saveDraftLocally(text)
-      speakMessage('Posting API unavailable. Saved draft locally instead.')
+    const inReplyTo = tweets[index]?.id
+
+    if (!inReplyTo) {
+      setReplyError('No active tweet to reply to.')
+      speakMessage('Cannot send reply because there is no active tweet.')
+      return false
     }
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const res = await fetch('/api/tweet/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, inReplyTo }),
+        })
+
+        const payload = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+
+        if (res.ok) {
+          setReplyError(null)
+          speakMessage('Reply sent.')
+          return true
+        }
+
+        if (payload?.error === 'AUTH_EXPIRED') {
+          setReplyError('Auth expired. Reconnect X and try again.')
+          speakMessage('Your X session expired. Please reconnect your account.')
+          return false
+        }
+
+        if (payload?.error === 'RATE_LIMITED') {
+          setReplyError('Rate limit reached. Please wait before sending another reply.')
+          speakMessage('Rate limit reached. Please wait and try again later.')
+          return false
+        }
+
+        if (attempt === 3) {
+          throw new Error(payload?.message ?? 'Reply post failed.')
+        }
+      } catch {
+        if (attempt === 3) {
+          saveDraftLocally(text)
+          setReplyError('Failed to post after retries. Draft saved locally.')
+          speakMessage('Failed to post after three attempts. Draft saved locally.')
+          return false
+        }
+      }
+    }
+
+    return false
   }, [index, saveDraftLocally, speakMessage, tweets])
 
   useEffect(() => {
@@ -151,24 +190,35 @@ export default function VaniPlayer() {
     recognition.onresult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase()
 
-      if (composeState === 'DICTATING') {
+      if (composeState === 'DICTATING' || composeState === 'EDITING') {
         setReplyDraft(transcript)
         setComposeState('CONFIRMING')
-        speakMessage(`Draft captured. You said: ${transcript}. Say send to post or cancel to discard.`)
+        speakMessage(`Draft captured. You said: ${transcript}. Say send, edit, or cancel.`)
         return
       }
 
       if (composeState === 'CONFIRMING') {
         const confirmation = parseConfirmation(transcript)
         if (confirmation === 'send') {
-          postReply(replyDraft).catch(() => undefined)
-          setComposeState('IDLE')
-          setReplyDraft('')
+          postReply(replyDraft).then((sent) => {
+            if (sent) {
+              setComposeState('IDLE')
+              setReplyDraft('')
+            }
+          }).catch(() => undefined)
+        }
+        if (confirmation === 'edit') {
+          setComposeState('EDITING')
+          speakMessage('Okay. Please dictate your revised reply.')
         }
         if (confirmation === 'cancel') {
           setComposeState('IDLE')
           setReplyDraft('')
+          setReplyError(null)
           speakMessage('Reply canceled.')
+        }
+        if (!confirmation) {
+          speakMessage('Please say send, edit, or cancel.')
         }
         return
       }
@@ -188,10 +238,11 @@ export default function VaniPlayer() {
         if (intent.text) {
           setReplyDraft(intent.text)
           setComposeState('CONFIRMING')
-          speakMessage(`Draft captured. You said: ${intent.text}. Say send to post or cancel to discard.`)
+          speakMessage(`Draft captured. You said: ${intent.text}. Say send, edit, or cancel.`)
           return
         }
         setReplyDraft('')
+        setReplyError(null)
         speakMessage('Reply mode enabled. Please dictate your message.')
       }
     }
@@ -225,6 +276,7 @@ export default function VaniPlayer() {
       <div className="card">
         <div className="small">State: {state}</div>
         <div className="small">Voice Reply: {composeState}{replyDraft ? ` — "${replyDraft}"` : ''}</div>
+        {replyError && <div className="small" style={{ color: '#fda4af' }}>Reply Error: {replyError}</div>}
         <div className="controls" style={{ marginTop: '.5rem' }}>
           <button className="primary" onClick={play}>Play</button>
           <button onClick={pause}>Pause</button>
