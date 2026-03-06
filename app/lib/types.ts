@@ -7,3 +7,16 @@ export type NarrationTweet = {
   text: string
   createdAt: string
 }
+
+export type ApiCapabilities = {
+  canReply: boolean
+  canLike: boolean
+  canFetchForYou: boolean
+  rateLimitRemaining: number
+}
+
+export type FeedResponse = {
+  items: NarrationTweet[]
+  nextCursor: string | null
+  capabilities: ApiCapabilities
+}

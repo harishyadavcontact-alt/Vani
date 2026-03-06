@@ -2,14 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { narrationChunks } from '@/app/lib/narration'
-import type { NarrationTweet, SourceType } from '@/app/lib/types'
+import type { ApiCapabilities, FeedResponse, NarrationTweet, SourceType } from '@/app/lib/types'
 import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 
-type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
 
 const rates = [1, 1.25, 1.5, 2]
+const DEFAULT_CAPABILITIES: ApiCapabilities = {
+  canReply: false,
+  canLike: false,
+  canFetchForYou: false,
+  rateLimitRemaining: 0,
+}
 
 export default function VaniPlayer() {
   const [source, setSource] = useState<SourceType>('curated')
@@ -22,6 +27,8 @@ export default function VaniPlayer() {
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [composeState, setComposeState] = useState<ComposeState>('IDLE')
   const [replyDraft, setReplyDraft] = useState('')
+  const [capabilities, setCapabilities] = useState<ApiCapabilities>(DEFAULT_CAPABILITIES)
+  const [likeCount, setLikeCount] = useState(0)
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const speakMessage = useCallback((message: string) => {
@@ -84,9 +91,17 @@ export default function VaniPlayer() {
     const res = await fetch(endpoint)
     const data = (await res.json()) as FeedResponse
     setTweets(data.items)
+    setCapabilities(data.capabilities)
     setIndex(0)
+    setComposeState('IDLE')
+    setReplyDraft('')
+    setLikeCount(0)
     setState('PAUSED')
-  }, [endpoint])
+
+    if (source === 'home' && !data.capabilities.canFetchForYou) {
+      speakMessage('For You is unavailable on current API plan; switched to Following.')
+    }
+  }, [endpoint, source, speakMessage])
 
   const play = useCallback(() => {
     if (!tweets.length) return
@@ -115,6 +130,11 @@ export default function VaniPlayer() {
   }, [])
 
   const postReply = useCallback(async (text: string) => {
+    if (!capabilities.canReply) {
+      speakMessage('Replies are unavailable on the current API plan.')
+      return
+    }
+
     try {
       const res = await fetch('/api/reply', {
         method: 'POST',
@@ -127,7 +147,18 @@ export default function VaniPlayer() {
       saveDraftLocally(text)
       speakMessage('Posting API unavailable. Saved draft locally instead.')
     }
-  }, [index, saveDraftLocally, speakMessage, tweets])
+  }, [capabilities.canReply, index, saveDraftLocally, speakMessage, tweets])
+
+  const beginReply = useCallback(() => {
+    if (!capabilities.canReply) {
+      speakMessage('Reply is unavailable on the current API plan.')
+      return
+    }
+
+    setComposeState('DICTATING')
+    setReplyDraft('')
+    speakMessage('Reply mode enabled. Please dictate your message.')
+  }, [capabilities.canReply, speakMessage])
 
   useEffect(() => {
     load().catch(() => setState('ERROR'))
@@ -181,9 +212,17 @@ export default function VaniPlayer() {
       if (intent.type === 'NEXT') next()
       if (intent.type === 'SWITCH_SOURCE') {
         setSource(intent.target)
-        speakMessage(`Switched source to ${intent.target}.`)
+        if (intent.target === 'home' && !capabilities.canFetchForYou) {
+          speakMessage('For You is unavailable on current API plan; switched to Following.')
+        } else {
+          speakMessage(`Switched source to ${intent.target}.`)
+        }
       }
       if (intent.type === 'REPLY') {
+        if (!capabilities.canReply) {
+          speakMessage('Reply is unavailable on the current API plan.')
+          return
+        }
         setComposeState('DICTATING')
         if (intent.text) {
           setReplyDraft(intent.text)
@@ -197,7 +236,7 @@ export default function VaniPlayer() {
     }
     recognition.start()
     return () => recognition.stop()
-  }, [voiceEnabled, pause, play, next, composeState, postReply, replyDraft, speakMessage])
+  }, [voiceEnabled, pause, play, next, composeState, postReply, replyDraft, speakMessage, capabilities])
 
   useEffect(() => {
     localStorage.setItem('vani:lastSource', source)
@@ -209,7 +248,7 @@ export default function VaniPlayer() {
       <h2>Tune-In</h2>
       <div className="source-grid">
         <button className={source === 'curated' ? 'primary' : ''} onClick={() => setSource('curated')}>Curated</button>
-        <button className={source === 'home' ? 'primary' : ''} onClick={() => setSource('home')}>Home Timeline</button>
+        <button className={source === 'home' ? 'primary' : ''} onClick={() => setSource('home')}>{capabilities.canFetchForYou ? 'For You' : 'Following'}</button>
         <button className={source === 'list' ? 'primary' : ''} onClick={() => setSource('list')}>List</button>
         <button className={source === 'user' ? 'primary' : ''} onClick={() => setSource('user')}>User</button>
         {source === 'list' && (
@@ -225,10 +264,20 @@ export default function VaniPlayer() {
       <div className="card">
         <div className="small">State: {state}</div>
         <div className="small">Voice Reply: {composeState}{replyDraft ? ` — "${replyDraft}"` : ''}</div>
+        <div className="small">Rate limit remaining: {capabilities.rateLimitRemaining}</div>
+        {!capabilities.canFetchForYou && source === 'home' && (
+          <div className="small">For You is unavailable on current API plan; switched to Following.</div>
+        )}
         <div className="controls" style={{ marginTop: '.5rem' }}>
           <button className="primary" onClick={play}>Play</button>
           <button onClick={pause}>Pause</button>
           <button onClick={next}>Next</button>
+          <button disabled={!capabilities.canLike} onClick={() => setLikeCount((v) => v + 1)}>
+            {capabilities.canLike ? `Like (${likeCount})` : 'Like unavailable'}
+          </button>
+          <button disabled={!capabilities.canReply} onClick={beginReply}>
+            {capabilities.canReply ? 'Reply via Voice' : 'Reply unavailable'}
+          </button>
           <select value={rate} onChange={(e) => setRate(Number(e.target.value))}>
             {rates.map((r) => <option key={r} value={r}>{r}x</option>)}
           </select>
