@@ -26,7 +26,7 @@ const emptySession = (): SourceSession => ({
 })
 
 const normalizeSession = (session: SourceSession): SourceSession => {
-  const safeIndex = session.queue.length ? Math.min(Math.max(session.currentIndex, 0), session.queue.length - 1) : 0
+  const safeIndex = session.queue.length ? Math.min(Math.max(session.currentIndex, 0), session.queue.length) : 0
   const activeItem = session.queue[safeIndex]
   return {
     queue: session.queue,
@@ -84,7 +84,7 @@ export default function VaniPlayer() {
     utter.onend = () => {
       updateCurrentSession((session) => ({
         ...session,
-        currentIndex: Math.min(session.currentIndex + 1, Math.max(session.queue.length - 1, 0)),
+        currentIndex: Math.min(session.currentIndex + 1, session.queue.length),
         lastPlayedItemId: current.id,
       }))
     }
@@ -134,7 +134,7 @@ export default function VaniPlayer() {
       window.speechSynthesis.cancel()
     }
     updateCurrentSession((session) => {
-      const nextIndex = Math.min(session.currentIndex + 1, Math.max(session.queue.length - 1, 0))
+      const nextIndex = Math.min(session.currentIndex + 1, session.queue.length)
       return {
         ...session,
         currentIndex: nextIndex,
