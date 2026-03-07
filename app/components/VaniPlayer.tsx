@@ -3,10 +3,9 @@
 import Image from 'next/image'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { narrationChunks } from '@/app/lib/narration'
-import type { NarrationTweet, SourceType } from '@/app/lib/types'
+import type { NarrationTweet, SourceResponse, SourceType } from '@/app/lib/types'
 import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 
-type FeedResponse = { items: NarrationTweet[] }
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
 type ComposeState = 'IDLE' | 'DICTATING' | 'CONFIRMING'
 
@@ -19,6 +18,13 @@ const sourceTabs: Array<{ label: string; value: SourceType }> = [
   { label: 'AI & Tech', value: 'list' },
   { label: 'Founders', value: 'user' },
 ]
+
+const sourceLabels: Record<SourceType, string> = {
+  curated: 'For You',
+  home: 'Following',
+  list: 'List',
+  user: 'User',
+}
 
 const avatarSrc = (handle: string) => `https://unavatar.io/x/${handle}`
 
@@ -34,6 +40,7 @@ export default function VaniPlayer() {
   const [composeState, setComposeState] = useState<ComposeState>('IDLE')
   const [replyDraft, setReplyDraft] = useState('')
   const [brokenAvatars, setBrokenAvatars] = useState<Record<string, boolean>>({})
+  const [notice, setNotice] = useState('')
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   const initialsFor = useCallback((name: string) => name
@@ -50,6 +57,14 @@ export default function VaniPlayer() {
     utterRef.current = utter
     window.speechSynthesis.speak(utter)
   }, [rate])
+
+  const announceNotice = useCallback((message: string) => {
+    if (!message || typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const utter = new SpeechSynthesisUtterance(message)
+    utter.rate = 1
+    window.speechSynthesis.cancel()
+    window.speechSynthesis.speak(utter)
+  }, [])
 
   const endpoint = useMemo(() => {
     if (source === 'curated') return '/api/source/curated'
@@ -99,11 +114,26 @@ export default function VaniPlayer() {
   const load = useCallback(async () => {
     setState('LOADING')
     const res = await fetch(endpoint)
-    const data = (await res.json()) as FeedResponse
+    const data = (await res.json()) as SourceResponse
+
+    if (!data.canFetchForYou && data.fallbackSource && data.fallbackSource !== source) {
+      const fallbackLabel = sourceLabels[data.fallbackSource]
+      const fallbackMessage = `${data.statusMessages.fetchForYou} Switched to ${fallbackLabel}.`
+      setNotice(fallbackMessage)
+      announceNotice(fallbackMessage)
+      setSource(data.fallbackSource)
+      return
+    }
+
+    const unavailableActions: string[] = []
+    if (!data.canReply) unavailableActions.push(data.statusMessages.reply)
+    if (!data.canLike) unavailableActions.push(data.statusMessages.like)
+
+    setNotice(unavailableActions.length > 0 ? unavailableActions.join(' ') : data.statusMessages.source)
     setTweets(data.items)
     setIndex(0)
     setState('PAUSED')
-  }, [endpoint])
+  }, [announceNotice, endpoint, source])
 
   const play = useCallback(() => {
     if (!tweets.length) return
@@ -236,11 +266,12 @@ export default function VaniPlayer() {
       <div className="orbital-ring orbital-ring-2" />
       <main className="shell">
         <div className="topbar">
-          <div className="logo">vani™</div>
+          <div className="logo">vani</div>
           <button className="avatar-btn" type="button">H</button>
         </div>
 
         <div className="tagline">receiving signals from earth, tuned for focused listening</div>
+        {notice ? <div className="tagline">{notice}</div> : null}
 
         <div className="source-tabs">
           {sourceTabs.map((tab) => (
@@ -264,7 +295,7 @@ export default function VaniPlayer() {
                   </div>
                   <div className="np-meta">
                     <div className="np-name">{current.authorName}</div>
-                    <div className="np-handle">@{current.authorHandle} · {source === 'home' ? 'Following' : source}</div>
+                    <div className="np-handle">@{current.authorHandle} - {sourceLabels[source]}</div>
                   </div>
                 </div>
                 <div className="np-text">{current.text}</div>
@@ -284,7 +315,7 @@ export default function VaniPlayer() {
           </section>
 
           <section>
-            <div className="voice-chip"><span className="dot" />{voiceEnabled ? 'Voice listening — say "skip" or "like this"' : 'Voice commands paused'}</div>
+            <div className="voice-chip"><span className="dot" />{voiceEnabled ? 'Voice listening - say "skip" or "like this"' : 'Voice commands paused'}</div>
             <div className="section-label">Up Next</div>
             <div className="queue-list">
               {queue.map((tweet, i) => {
@@ -319,16 +350,16 @@ export default function VaniPlayer() {
             </div>
             <div className="player-meta">
               <div className="player-name">{current?.authorName ?? 'Vani'}</div>
-              <div className="player-source">{sourceTabs.find((tab) => tab.value === source)?.label} · {Math.max(tweets.length - index - 1, 0)} left in queue</div>
+              <div className="player-source">{sourceTabs.find((tab) => tab.value === source)?.label} - {Math.max(tweets.length - index - 1, 0)} left in queue</div>
             </div>
-            <button className="speed-btn" type="button" onClick={() => setRate(rates[(rates.indexOf(rate) + 1) % rates.length])}>{rate}×</button>
+            <button className="speed-btn" type="button" onClick={() => setRate(rates[(rates.indexOf(rate) + 1) % rates.length])}>{rate}x</button>
           </div>
           <div className="player-controls">
-            <button className="ctrl-btn" type="button" title="Previous" onClick={previous}>←</button>
-            <button className="ctrl-btn" type="button" title="Replay" onClick={speakCurrent}>↩</button>
-            <button className="play-btn" type="button" onClick={state === 'PLAYING' ? pause : play}>{state === 'PLAYING' ? '⏸' : '▶'}</button>
-            <button className="ctrl-btn" type="button" title="Next" onClick={next}>↪</button>
-            <button className="ctrl-btn mic-btn" type="button" title="Voice" onClick={() => setVoiceEnabled((v) => !v)}>🎙</button>
+            <button className="ctrl-btn" type="button" title="Previous" onClick={previous}>Prev</button>
+            <button className="ctrl-btn" type="button" title="Replay" onClick={speakCurrent}>Replay</button>
+            <button className="play-btn" type="button" onClick={state === 'PLAYING' ? pause : play}>{state === 'PLAYING' ? 'Pause' : 'Play'}</button>
+            <button className="ctrl-btn" type="button" title="Next" onClick={next}>Next</button>
+            <button className="ctrl-btn mic-btn" type="button" title="Voice" onClick={() => setVoiceEnabled((v) => !v)}>Mic</button>
           </div>
         </div>
       </div>
