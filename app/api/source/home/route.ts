@@ -1,19 +1,30 @@
 import { NextResponse } from 'next/server'
 import { HOME_TWEETS } from '@/app/lib/mockData'
+import type { FeedResponse } from '@/app/lib/types'
 
 export async function GET() {
-  return NextResponse.json({
-    items: HOME_TWEETS,
+  const capabilities = {
     canReply: true,
     canLike: true,
-    canFetchForYou: true,
-    fallbackSource: null,
-    statusMessages: {
-      source: 'Following source is active.',
-      reply: 'Replies are available for this source.',
-      like: 'Likes are available for this source.',
-      fetchForYou: 'Feed loaded successfully.',
-    },
+    canFetchForYou: false,
+    rateLimitRemaining: 180,
+  }
+
+  const response: FeedResponse = {
+    items: HOME_TWEETS,
     nextCursor: null,
-  })
+    capabilities,
+    fallbackSource: 'curated',
+    statusMessages: {
+      source: 'Following feed loaded.',
+      reply: 'Reply is available for following feed items.',
+      like: 'Like is available for following feed items.',
+      fetchForYou: 'For You is unavailable on the current API plan.',
+    },
+    canReply: capabilities.canReply,
+    canLike: capabilities.canLike,
+    canFetchForYou: capabilities.canFetchForYou,
+  }
+
+  return NextResponse.json(response)
 }

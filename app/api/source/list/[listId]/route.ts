@@ -1,20 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { LIST_TWEETS } from '@/app/lib/mockData'
+import type { FeedResponse } from '@/app/lib/types'
 
 export async function GET(_req: NextRequest, { params }: { params: { listId: string } }) {
   const items = LIST_TWEETS[params.listId] ?? []
-  return NextResponse.json({
-    items,
-    canReply: false,
+  const capabilities = {
+    canReply: true,
     canLike: true,
-    canFetchForYou: true,
-    fallbackSource: 'home',
-    statusMessages: {
-      source: `List source ${params.listId} is active.`,
-      reply: 'Replies are unavailable in list mode. Switch to Following if you want to reply.',
-      like: 'Likes are available for this source.',
-      fetchForYou: 'Feed loaded successfully.',
-    },
+    canFetchForYou: false,
+    rateLimitRemaining: 75,
+  }
+
+  const response: FeedResponse = {
+    items,
     nextCursor: null,
-  })
+    capabilities,
+    fallbackSource: null,
+    statusMessages: {
+      source: `List ${params.listId} loaded.`,
+      reply: 'Reply is available for list playback.',
+      like: 'Like is available for list playback.',
+      fetchForYou: 'For You is unavailable on the current API plan.',
+    },
+    canReply: capabilities.canReply,
+    canLike: capabilities.canLike,
+    canFetchForYou: capabilities.canFetchForYou,
+  }
+
+  return NextResponse.json(response)
 }

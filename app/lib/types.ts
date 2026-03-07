@@ -1,19 +1,5 @@
 export type SourceType = 'curated' | 'home' | 'list' | 'user'
 
-export type SourceResponse = {
-  items: NarrationTweet[]
-  canReply: boolean
-  canLike: boolean
-  canFetchForYou: boolean
-  fallbackSource: SourceType | null
-  statusMessages: {
-    source: string
-    reply: string
-    like: string
-    fetchForYou: string
-  }
-}
-
 export type NarrationTweet = {
   id: string
   authorHandle: string
@@ -21,3 +7,30 @@ export type NarrationTweet = {
   text: string
   createdAt: string
 }
+
+export type ApiCapabilities = {
+  canReply: boolean
+  canLike: boolean
+  canFetchForYou: boolean
+  rateLimitRemaining: number
+}
+
+export type SourceStatusMessages = {
+  source: string
+  reply: string
+  like: string
+  fetchForYou: string
+}
+
+export type FeedResponse = {
+  items: NarrationTweet[]
+  nextCursor: string | null
+  capabilities: ApiCapabilities
+  fallbackSource: SourceType | null
+  statusMessages: SourceStatusMessages
+  canReply: boolean
+  canLike: boolean
+  canFetchForYou: boolean
+}
+
+export type SourceResponse = FeedResponse
