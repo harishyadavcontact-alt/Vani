@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getAuthState, isDemoModeEnabled } from '@/app/lib/auth'
+import { getAuthContext } from '@/app/lib/auth'
 import { OAuthTokenExpiredError, createReplyTweet, XPostFailedError, XRateLimitError } from '@/app/lib/xClient'
 
 type ReplyRequest = {
@@ -8,12 +8,17 @@ type ReplyRequest = {
 }
 
 export async function POST(request: Request) {
-  const authState = await getAuthState()
-  if (authState !== 'connected') {
+  const auth = await getAuthContext()
+  if (!auth.canPostReplies) {
     return NextResponse.json(
       {
         error: 'AUTH_REQUIRED',
         message: 'Connect your X account before posting replies.',
+        auth: {
+          mode: auth.mode,
+          sessionState: auth.sessionState,
+          provider: auth.provider,
+        },
       },
       { status: 401 },
     )
@@ -33,7 +38,7 @@ export async function POST(request: Request) {
     )
   }
 
-  if (isDemoModeEnabled()) {
+  if (auth.mode === 'demo') {
     return NextResponse.json({
       ok: true,
       replyId: `demo-${Date.now()}`,
@@ -52,6 +57,7 @@ export async function POST(request: Request) {
         {
           error: 'AUTH_EXPIRED',
           message: error.message,
+          reason: error.reason,
         },
         { status: 401 },
       )

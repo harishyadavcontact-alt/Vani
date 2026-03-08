@@ -1,4 +1,29 @@
-export type SourceType = 'curated' | 'home' | 'list' | 'user'
+import type { BootstrappedAppState } from '@/lib/domain/entities'
+
+export type SourceType = 'curated' | 'home' | 'list' | 'user' | 'bookmarks'
+export type AuthMode = 'demo' | 'oauth'
+export type AuthSessionState = 'signed_out' | 'guest' | 'connected'
+
+export type AccountUser = {
+  name: string
+  handle: string
+}
+
+export type MeResponse = {
+  authenticated: boolean
+  mode: AuthMode
+  sessionState: AuthSessionState
+  provider: 'x'
+  providerConnected: boolean
+  hasOAuthTokens: boolean
+  capabilities: {
+    canUseDemo: boolean
+    canConnectX: boolean
+    canPostReplies: boolean
+  }
+  user: AccountUser | null
+  appState?: BootstrappedAppState
+}
 
 export type NarrationTweet = {
   id: string

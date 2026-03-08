@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { threadTweets } from '@/app/lib/mockData'
+import { getThreadByExternalId } from '@/lib/server/services/bootstrap-service'
 
 export async function GET(_: Request, { params }: { params: { tweetId: string } }) {
-  return NextResponse.json({ items: threadTweets(params.tweetId), nextCursor: null })
+  return NextResponse.json({ items: await getThreadByExternalId(params.tweetId), nextCursor: null })
 }

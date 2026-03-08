@@ -1,6 +1,19 @@
-import { clearOAuthUserTokens, getOAuthUserTokens, setOAuthUserTokens } from '@/app/lib/auth'
+import { clearConnectedAuthSession, getOAuthUserTokens, setOAuthUserTokens } from '@/app/lib/auth'
 
-export class OAuthTokenExpiredError extends Error {}
+export type OAuthExpiryReason =
+  | 'missing_token'
+  | 'missing_refresh_token'
+  | 'missing_refresh_config'
+  | 'refresh_failed'
+  | 'invalid_refresh_response'
+  | 'post_unauthorized'
+
+export class OAuthTokenExpiredError extends Error {
+  constructor(message: string, readonly reason: OAuthExpiryReason) {
+    super(message)
+    this.name = 'OAuthTokenExpiredError'
+  }
+}
 export class XRateLimitError extends Error {}
 export class XPostFailedError extends Error {}
 
@@ -9,12 +22,25 @@ type XCreateTweetResponse = {
   errors?: Array<{ message?: string }>
 }
 
+function logRefreshEvent(level: 'info' | 'warn' | 'error', event: string, details: Record<string, unknown> = {}) {
+  console[level](`[vani:x] ${event}`, details)
+}
+
 async function refreshUserAccessToken(refreshToken: string) {
   const clientId = process.env.X_CLIENT_ID
   const clientSecret = process.env.X_CLIENT_SECRET
 
+  logRefreshEvent('info', 'oauth_refresh_attempt', {
+    hasClientId: Boolean(clientId),
+    hasClientSecret: Boolean(clientSecret),
+  })
+
   if (!clientId || !clientSecret) {
-    throw new OAuthTokenExpiredError('OAuth credentials are missing for token refresh.')
+    logRefreshEvent('error', 'oauth_refresh_missing_config', {
+      hasClientId: Boolean(clientId),
+      hasClientSecret: Boolean(clientSecret),
+    })
+    throw new OAuthTokenExpiredError('OAuth credentials are missing for token refresh.', 'missing_refresh_config')
   }
 
   const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')
@@ -31,7 +57,13 @@ async function refreshUserAccessToken(refreshToken: string) {
   })
 
   if (!response.ok) {
-    throw new OAuthTokenExpiredError('Unable to refresh OAuth token.')
+    const payload = (await response.json().catch(() => null)) as { error?: string; error_description?: string } | null
+    logRefreshEvent('warn', 'oauth_refresh_failed', {
+      status: response.status,
+      error: payload?.error ?? null,
+      errorDescription: payload?.error_description ?? null,
+    })
+    throw new OAuthTokenExpiredError('Unable to refresh OAuth token.', 'refresh_failed')
   }
 
   const payload = (await response.json()) as {
@@ -41,8 +73,18 @@ async function refreshUserAccessToken(refreshToken: string) {
   }
 
   if (!payload.access_token) {
-    throw new OAuthTokenExpiredError('Token refresh did not return access token.')
+    logRefreshEvent('error', 'oauth_refresh_invalid_response', {
+      hasAccessToken: false,
+      hasRefreshToken: Boolean(payload.refresh_token),
+      expiresIn: payload.expires_in ?? null,
+    })
+    throw new OAuthTokenExpiredError('Token refresh did not return access token.', 'invalid_refresh_response')
   }
+
+  logRefreshEvent('info', 'oauth_refresh_succeeded', {
+    hasRefreshToken: Boolean(payload.refresh_token),
+    expiresIn: payload.expires_in ?? null,
+  })
 
   return {
     accessToken: payload.access_token,
@@ -53,20 +95,33 @@ async function refreshUserAccessToken(refreshToken: string) {
 
 async function getValidAccessToken() {
   const tokens = await getOAuthUserTokens()
-  if (!tokens) throw new OAuthTokenExpiredError('Missing OAuth user token. Please reconnect X.')
+  if (!tokens) {
+    logRefreshEvent('warn', 'oauth_access_missing_token')
+    throw new OAuthTokenExpiredError('Missing OAuth user token. Please reconnect X.', 'missing_token')
+  }
 
   if (!tokens.expiresAt || tokens.expiresAt > Date.now() + 15_000) {
     return tokens.accessToken
   }
 
   if (!tokens.refreshToken) {
-    await clearOAuthUserTokens()
-    throw new OAuthTokenExpiredError('OAuth session expired. Please reconnect X.')
+    logRefreshEvent('warn', 'oauth_refresh_missing_refresh_token', {
+      expiresAt: tokens.expiresAt,
+    })
+    await clearConnectedAuthSession()
+    throw new OAuthTokenExpiredError('OAuth session expired. Please reconnect X.', 'missing_refresh_token')
   }
 
-  const refreshed = await refreshUserAccessToken(tokens.refreshToken)
-  await setOAuthUserTokens(refreshed)
-  return refreshed.accessToken
+  try {
+    const refreshed = await refreshUserAccessToken(tokens.refreshToken)
+    await setOAuthUserTokens(refreshed)
+    return refreshed.accessToken
+  } catch (error) {
+    if (error instanceof OAuthTokenExpiredError) {
+      await clearConnectedAuthSession()
+    }
+    throw error
+  }
 }
 
 export async function createReplyTweet(text: string, inReplyToTweetId: string) {
@@ -87,8 +142,9 @@ export async function createReplyTweet(text: string, inReplyToTweetId: string) {
   })
 
   if (response.status === 401) {
-    await clearOAuthUserTokens()
-    throw new OAuthTokenExpiredError('OAuth session expired. Please reconnect X.')
+    logRefreshEvent('warn', 'oauth_post_unauthorized')
+    await clearConnectedAuthSession()
+    throw new OAuthTokenExpiredError('OAuth session expired. Please reconnect X.', 'post_unauthorized')
   }
 
   if (response.status === 429) {

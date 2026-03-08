@@ -1,10 +1,22 @@
 import { NextResponse } from 'next/server'
-import { clearOAuthUserTokens, isDemoModeEnabled, setAuthState } from '@/app/lib/auth'
+import { clearAuthState, clearOAuthUserTokens, getAuthContext, setAuthState } from '@/app/lib/auth'
 
 export async function GET(request: Request) {
-  if (!isDemoModeEnabled()) {
+  const auth = await getAuthContext()
+
+  if (auth.mode !== 'demo') {
+    await clearAuthState()
+    await clearOAuthUserTokens()
     return NextResponse.json(
-      { error: 'Demo mode is disabled. Set DEMO_MODE=true to enable this flow.' },
+      {
+        error: 'DEMO_MODE_DISABLED',
+        message: 'Demo mode is disabled. Set DEMO_MODE=true to enable this flow.',
+        auth: {
+          mode: auth.mode,
+          sessionState: 'signed_out',
+          provider: auth.provider,
+        },
+      },
       { status: 400 },
     )
   }

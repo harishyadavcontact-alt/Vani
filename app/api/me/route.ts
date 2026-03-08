@@ -1,35 +1,27 @@
 import { NextResponse } from 'next/server'
-import { getAuthState, isDemoModeEnabled } from '@/app/lib/auth'
-
-const guestUser = { name: 'Guest Listener', handle: 'guest' }
-const connectedUser = { name: 'Demo User', handle: 'vani_listener' }
+import { getAuthContext } from '@/app/lib/auth'
+import type { MeResponse } from '@/app/lib/types'
+import { getBootstrappedState } from '@/lib/server/services/bootstrap-service'
 
 export async function GET() {
-  const authState = await getAuthState()
-  const inDemoMode = isDemoModeEnabled()
+  const auth = await getAuthContext()
+  const appState = await getBootstrappedState()
 
-  if (authState === 'connected') {
-    return NextResponse.json({
-      authenticated: true,
-      mode: inDemoMode ? 'demo' : 'oauth',
-      provider: 'x',
-      user: connectedUser
-    })
+  const response: MeResponse = {
+    authenticated: auth.isAuthenticated,
+    mode: auth.mode,
+    sessionState: auth.sessionState,
+    provider: auth.provider,
+    providerConnected: auth.providerConnected,
+    hasOAuthTokens: auth.hasOAuthTokens,
+    capabilities: {
+      canUseDemo: auth.canUseDemo,
+      canConnectX: auth.canConnectX,
+      canPostReplies: auth.canPostReplies,
+    },
+    user: auth.user,
+    appState,
   }
 
-  if (authState === 'guest' && inDemoMode) {
-    return NextResponse.json({
-      authenticated: false,
-      mode: 'demo',
-      provider: null,
-      user: guestUser
-    })
-  }
-
-  return NextResponse.json({
-    authenticated: false,
-    mode: inDemoMode ? 'demo' : 'oauth',
-    provider: null,
-    user: inDemoMode ? guestUser : null
-  })
+  return NextResponse.json(response)
 }
