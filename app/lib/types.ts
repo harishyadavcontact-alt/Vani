@@ -47,6 +47,34 @@ export type SourceStatusMessages = {
   fetchForYou: string
 }
 
+export type PublicSourceKind = 'post' | 'user' | 'list'
+
+export type PublicListenStatus = 'ok' | 'invalid_source' | 'empty' | 'temporary_failure'
+
+export type PublicListenErrorCode =
+  | 'EMPTY_INPUT'
+  | 'MALFORMED_X_URL'
+  | 'UNSUPPORTED_X_URL'
+  | 'INVALID_HANDLE'
+  | 'INVALID_LIST_IDENTIFIER'
+  | 'TEMPORARY_FAILURE'
+
+export type PublicListenRequest = {
+  input: string
+}
+
+export type PublicListenError = {
+  code: PublicListenErrorCode
+  message: string
+}
+
+export type ResolvedPublicSourceView = {
+  kind: PublicSourceKind
+  label: string
+  rawInput: string
+  value: string
+}
+
 export type FeedResponse = {
   items: NarrationTweet[]
   nextCursor: string | null
@@ -56,6 +84,10 @@ export type FeedResponse = {
   canReply: boolean
   canLike: boolean
   canFetchForYou: boolean
+  listenMode: 'authenticated' | 'anonymous'
+  status: PublicListenStatus
+  resolvedSource: ResolvedPublicSourceView | null
+  error: PublicListenError | null
 }
 
 export type SourceResponse = FeedResponse

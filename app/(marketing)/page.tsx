@@ -1,3 +1,5 @@
+import { PublicListenForm } from '@/components/PublicListenForm'
+
 export default function MarketingPage() {
   return (
     <main className="marketing-shell">
@@ -5,12 +7,13 @@ export default function MarketingPage() {
         <div className="eyebrow">Vani v2</div>
         <h1>The production-grade X audio client for focused listening.</h1>
         <p>
-          Connect your X account, sync your sources, build a listening inbox, open threads, and reply without leaving the player.
+          Start listening to public X posts instantly, then log in later for saved sources, sync, and replies.
         </p>
         <div className="hero-actions">
-          <a className="cta" href="/listen">Open Product</a>
+          <a className="cta" href="/listen">Listen now</a>
           <a className="mini-pill" href="/api/health">Health Check</a>
         </div>
+        <PublicListenForm />
       </section>
 
       <section className="marketing-grid">
@@ -21,13 +24,13 @@ export default function MarketingPage() {
         </article>
         <article className="panel">
           <div className="panel-kicker">Sync</div>
-          <h3>Source-aware ingestion</h3>
-          <p>Curated, following, list, bookmarks, and handle-based sources normalize into one queue model.</p>
+          <h3>Anonymous first, account later</h3>
+          <p>Public listening is the default path. Login upgrades the experience instead of blocking first play.</p>
         </article>
         <article className="panel">
           <div className="panel-kicker">Ship</div>
-          <h3>Hosted-first architecture</h3>
-          <p>Postgres, Drizzle, structured services, health checks, and modular UI ready for production hardening.</p>
+          <h3>Source-aware ingestion</h3>
+          <p>Post URLs, handles, and lists can converge into one listening model with a fast path to playback.</p>
         </article>
       </section>
     </main>

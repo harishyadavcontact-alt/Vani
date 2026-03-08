@@ -2,13 +2,18 @@
 
 import Image from 'next/image'
 import { useAppBootstrap } from '@/lib/client/hooks/useAppBootstrap'
+import { PublicListenForm } from '@/components/PublicListenForm'
 import { avatarSrc, sourceLabels, useImmersivePlayer, waveformHeights } from '@/lib/client/hooks/useImmersivePlayer'
 
 const rates = [1, 1.25, 1.5, 2]
 
-export function PlayerShell() {
+type Props = {
+  initialPublicSource?: string
+}
+
+export function PlayerShell({ initialPublicSource = '' }: Props) {
   const { data, loading, error } = useAppBootstrap()
-  const player = useImmersivePlayer(data)
+  const player = useImmersivePlayer(data, initialPublicSource)
 
   const progress = player.current ? (player.state === 'PLAYING' ? 0.37 : 0.16) : 0
   const filledBars = Math.floor(waveformHeights.length * progress)
@@ -24,12 +29,13 @@ export function PlayerShell() {
     return <div className="app-shell centered"><div className="hero-card"><h2>Unable to load app</h2><p>{error ?? 'Unknown error'}</p></div></div>
   }
 
-  if (player.sourceTabs.length === 0) {
+  if (player.sourceTabs.length === 0 && !player.usingPublicSource) {
     return (
       <div className="app-shell centered">
         <div className="hero-card">
           <h2>No sources configured</h2>
-          <p>Enable at least one demo source before opening the listening player.</p>
+          <p>Paste a public source to start anonymous playback even without configured feeds.</p>
+          <PublicListenForm compact initialValue={player.publicSourceInput} />
         </div>
       </div>
     )
@@ -62,19 +68,36 @@ export function PlayerShell() {
           <div className="status-chip">db {player.appState.health.database}</div>
           <div className="status-chip">audio {player.appState.health.audio}</div>
         </div>
+        {data.sessionState !== 'connected' ? (
+          <div className="anonymous-banner">
+            <strong>Anonymous listening is open.</strong>
+            <p>Start with public sources now. Log in only when you want saved sources, sync, or replies.</p>
+          </div>
+        ) : null}
+        <PublicListenForm initialValue={player.publicSourceInput} compact />
+        {player.usingPublicSource && data.sessionState !== 'connected' ? (
+          <div className="notice-banner">
+            Listening anonymously from <strong>{player.publicSourceInput}</strong>. Log in later for saved sources, sync, and replies.
+          </div>
+        ) : null}
         {player.notice ? <div className="notice-banner">{player.notice}</div> : null}
 
         <div className="source-tabs">
           {player.sourceTabs.map((tab) => (
             <button
               key={tab.id}
-              className={`tab ${player.selectedSource?.id === tab.id && player.mode === 'feed' ? 'active' : ''}`}
+              className={`tab ${player.selectedSource?.id === tab.id && player.mode === 'feed' && !player.usingPublicSource ? 'active' : ''}`}
               type="button"
-              onClick={() => { player.setState('PAUSED'); player.setSelectedSourceId(tab.id) }}
+              onClick={() => { player.clearPublicSource(); player.setState('PAUSED'); player.setSelectedSourceId(tab.id) }}
             >
               {tab.label}
             </button>
           ))}
+          {player.usingPublicSource ? (
+            <button className="tab active" type="button" onClick={() => player.load().catch(() => player.setState('ERROR'))}>
+              Public Source
+            </button>
+          ) : null}
           <button className={`tab ${player.mode === 'thread' ? 'active' : ''}`} type="button" onClick={() => player.openThread().catch(() => player.setState('ERROR'))}>Thread</button>
           <button className="tab" type="button" onClick={() => player.load().catch(() => player.setState('ERROR'))}>Refresh</button>
         </div>
@@ -205,7 +228,7 @@ export function PlayerShell() {
             <section className="signal-card">
               <div className="section-label">Signal Stack</div>
               <div className="signal-grid">
-                <div className="signal-pill">source {player.selectedSource?.label ?? sourceLabels.home}</div>
+                <div className="signal-pill">source {player.usingPublicSource ? 'public' : player.selectedSource?.label ?? sourceLabels.home}</div>
                 <div className="signal-pill">sync {player.appState.health.sync}</div>
                 <div className="signal-pill">voice {player.voiceEnabled ? 'armed' : 'off'}</div>
                 <div className="signal-pill">mode {player.mode}</div>

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { narrationChunks } from '@/app/lib/narration'
-import type { ApiCapabilities, MeResponse, NarrationTweet, SourceResponse, SourceType } from '@/app/lib/types'
+import type { ApiCapabilities, MeResponse, NarrationTweet, PublicListenRequest, SourceResponse, SourceType } from '@/app/lib/types'
 import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
 import type { FeedItem, SourceConfig } from '@/lib/domain/entities'
 
@@ -82,9 +82,14 @@ function getSourceEndpoint(source: SourceConfig | null) {
   return null
 }
 
-export function useImmersivePlayer(data: MeResponse | null) {
+function getPublicSourceKey(rawInput: string) {
+  return `public:${rawInput.trim().toLowerCase()}`
+}
+
+export function useImmersivePlayer(data: MeResponse | null, initialPublicSource = '') {
   const appState = data?.appState
   const [selectedSourceId, setSelectedSourceId] = useState('')
+  const [publicSourceInput, setPublicSourceInput] = useState(initialPublicSource.trim())
   const [sessions, setSessions] = useState<FeedSessions>({})
   const [state, setState] = useState<PlayerState>('IDLE')
   const [rate, setRate] = useState(1.25)
@@ -101,7 +106,9 @@ export function useImmersivePlayer(data: MeResponse | null) {
   const availableSources = useMemo(() => (appState?.sources ?? []).filter((source) => sourceOrder.includes(source.kind)), [appState?.sources])
   const sourceTabs = useMemo(() => sourceOrder.map((kind) => availableSources.find((source) => source.kind === kind)).filter((source): source is SourceConfig => Boolean(source)), [availableSources])
   const selectedSource = useMemo(() => sourceTabs.find((source) => source.id === selectedSourceId) ?? sourceTabs[0] ?? null, [selectedSourceId, sourceTabs])
-  const sourceKey = useMemo(() => selectedSource ? `${selectedSource.kind}:${selectedSource.value}` : 'source:none', [selectedSource])
+  const trimmedPublicSourceInput = useMemo(() => publicSourceInput.trim(), [publicSourceInput])
+  const usingPublicSource = Boolean(trimmedPublicSourceInput)
+  const sourceKey = useMemo(() => usingPublicSource ? getPublicSourceKey(trimmedPublicSourceInput) : selectedSource ? `${selectedSource.kind}:${selectedSource.value}` : 'source:none', [selectedSource, trimmedPublicSourceInput, usingPublicSource])
   const endpoint = useMemo(() => getSourceEndpoint(selectedSource), [selectedSource])
   const feedSession = sessions[sourceKey] ?? createPlaybackSession([], 0, defaultCapabilities, '')
   const feedCurrent = feedSession.queue[feedSession.currentIndex]
@@ -133,8 +140,14 @@ export function useImmersivePlayer(data: MeResponse | null) {
     const match = sourceTabs.find((source) => source.kind === kind)
     if (!match) return
     setMode('feed')
+    setPublicSourceInput('')
     setSelectedSourceId(match.id)
   }, [sourceTabs])
+
+  const clearPublicSource = useCallback(() => {
+    setPublicSourceInput('')
+    setMode('feed')
+  }, [])
 
   const setCurrentIndex = useCallback((nextIndex: number) => {
     if (mode === 'thread') {
@@ -180,7 +193,33 @@ export function useImmersivePlayer(data: MeResponse | null) {
     speakChunks([prefix, ...narrationChunks(current.text)], advancePlayback)
   }, [advancePlayback, current, currentIndex, mode, speakChunks])
 
+  const loadPublicSource = useCallback(async (rawInput: string) => {
+    setState('LOADING')
+    const request: PublicListenRequest = { input: rawInput }
+    const res = await fetch('/api/source/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      cache: 'no-store',
+    })
+    const payload = (await res.json()) as SourceResponse
+    const sessionKey = getPublicSourceKey(rawInput)
+    const priorSession = sessions[sessionKey]
+    const recoveredIndex = priorSession?.lastPlayedTweetId ? payload.items.findIndex((item) => item.id === priorSession.lastPlayedTweetId) : -1
+    const nextIndex = recoveredIndex >= 0 ? recoveredIndex : Math.min(priorSession?.currentIndex ?? 0, Math.max(payload.items.length - 1, 0))
+    const nextNotice = payload.error?.message ?? payload.statusMessages.source
+    updateFeedSession(sessionKey, () => createPlaybackSession(payload.items, nextIndex, payload.capabilities, nextNotice, payload.nextCursor, payload.items[nextIndex]?.id ?? priorSession?.lastPlayedTweetId ?? null))
+    setNotice(nextNotice)
+    setMode('feed')
+    setState(payload.status === 'ok' || payload.status === 'empty' ? 'PAUSED' : 'ERROR')
+    return payload
+  }, [sessions, updateFeedSession])
+
   const load = useCallback(async () => {
+    if (usingPublicSource) {
+      await loadPublicSource(trimmedPublicSourceInput)
+      return
+    }
     if (!endpoint || !selectedSource) return
     setState('LOADING')
     try {
@@ -206,7 +245,7 @@ export function useImmersivePlayer(data: MeResponse | null) {
       setNotice('Unable to load this source right now.')
       setState('ERROR')
     }
-  }, [announceNotice, endpoint, selectedSource, sessions, setSourceByKind, sourceKey, updateFeedSession])
+  }, [announceNotice, endpoint, loadPublicSource, selectedSource, sessions, setSourceByKind, sourceKey, trimmedPublicSourceInput, updateFeedSession, usingPublicSource])
 
   const play = useCallback(() => { if (currentQueue.length) setState('PLAYING') }, [currentQueue.length])
   const pause = useCallback(() => { if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel(); setState('PAUSED') }, [])
@@ -288,8 +327,12 @@ export function useImmersivePlayer(data: MeResponse | null) {
     try {
       const savedSelection = localStorage.getItem(selectionStorageKey)
       if (savedSelection) {
-        const parsed = JSON.parse(savedSelection) as { sourceId?: string }
-        if (parsed.sourceId && availableSources.some((source) => source.id === parsed.sourceId)) setSelectedSourceId(parsed.sourceId)
+        const parsed = JSON.parse(savedSelection) as { sourceId?: string; publicSource?: string }
+        if (parsed.publicSource?.trim()) {
+          setPublicSourceInput(parsed.publicSource)
+        } else if (parsed.sourceId && availableSources.some((source) => source.id === parsed.sourceId)) {
+          setSelectedSourceId(parsed.sourceId)
+        }
       }
     } catch {
       localStorage.removeItem(selectionStorageKey)
@@ -300,19 +343,26 @@ export function useImmersivePlayer(data: MeResponse | null) {
     } catch {
       localStorage.removeItem(queueStorageKey)
     }
-    if (!selectedSourceId && availableSources[0]?.id) setSelectedSourceId(availableSources[0].id)
+    if (!selectedSourceId && !trimmedPublicSourceInput && availableSources[0]?.id) setSelectedSourceId(availableSources[0].id)
     setHydrated(true)
-  }, [availableSources, data, selectedSourceId])
+  }, [availableSources, data, selectedSourceId, trimmedPublicSourceInput])
 
   useEffect(() => {
-    if (!hydrated || !selectedSource) return
-    if (feedSession.queue.length) {
+    const nextInput = initialPublicSource.trim()
+    if (!nextInput) return
+    setPublicSourceInput(nextInput)
+    setMode('feed')
+  }, [initialPublicSource])
+
+  useEffect(() => {
+    if (!hydrated || (!selectedSource && !usingPublicSource)) return
+    if (feedSession.queue.length || feedSession.notice) {
       setNotice(feedSession.notice)
       setState((existing) => existing === 'IDLE' ? 'PAUSED' : existing)
       return
     }
     load().catch(() => setState('ERROR'))
-  }, [feedSession.notice, feedSession.queue.length, hydrated, load, selectedSource])
+  }, [feedSession.notice, feedSession.queue.length, hydrated, load, selectedSource, usingPublicSource])
 
   useEffect(() => {
     if (!voiceEnabled || typeof window === 'undefined') return
@@ -367,7 +417,13 @@ export function useImmersivePlayer(data: MeResponse | null) {
   }, [activeCapabilities.canReply, composeState, exitThreadMode, mode, next, openThread, pause, play, postReply, replyDraft, setSourceByKind, speakMessage, voiceEnabled])
 
   useEffect(() => { if (typeof window !== 'undefined' && hydrated) localStorage.setItem(queueStorageKey, JSON.stringify(sessions)) }, [hydrated, sessions])
-  useEffect(() => { if (typeof window !== 'undefined' && hydrated && selectedSource) localStorage.setItem(selectionStorageKey, JSON.stringify({ sourceId: selectedSource.id })) }, [hydrated, selectedSource])
+  useEffect(() => {
+    if (typeof window === 'undefined' || !hydrated) return
+    localStorage.setItem(selectionStorageKey, JSON.stringify({
+      sourceId: usingPublicSource ? '' : selectedSource?.id ?? '',
+      publicSource: trimmedPublicSourceInput,
+    }))
+  }, [hydrated, selectedSource, trimmedPublicSourceInput, usingPublicSource])
   useEffect(() => { if (state === 'PLAYING') { if (currentIndex >= currentQueue.length) setState('PAUSED'); else speakCurrent() } }, [currentIndex, currentQueue.length, speakCurrent, state])
   useEffect(() => () => { if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel() }, [])
 
@@ -376,6 +432,10 @@ export function useImmersivePlayer(data: MeResponse | null) {
     sourceTabs,
     selectedSource,
     setSelectedSourceId,
+    publicSourceInput,
+    setPublicSourceInput,
+    usingPublicSource,
+    clearPublicSource,
     state,
     setState,
     rate,
@@ -397,7 +457,7 @@ export function useImmersivePlayer(data: MeResponse | null) {
     feedCurrent,
     threadSession,
     activeCapabilities,
-    activeSourceLabel: mode === 'thread' ? 'Thread' : selectedSource?.label ?? 'Source',
+    activeSourceLabel: mode === 'thread' ? 'Thread' : usingPublicSource ? trimmedPublicSourceInput : selectedSource?.label ?? 'Source',
     initialsFor,
     setCurrentIndex,
     load,

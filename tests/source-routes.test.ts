@@ -18,9 +18,13 @@ describe('source routes', () => {
     expect(curatedJson.capabilities.canReply).toBe(false)
     expect(curatedJson.canReply).toBe(false)
     expect(curatedJson.statusMessages.source).toContain('Curated')
+    expect(curatedJson.listenMode).toBe('authenticated')
+    expect(curatedJson.status).toBe('ok')
     expect(homeJson.capabilities.canReply).toBe(true)
     expect(homeJson.fallbackSource).toBe('curated')
     expect(homeJson.nextCursor).toBeNull()
+    expect(homeJson.listenMode).toBe('authenticated')
+    expect(homeJson.error).toBeNull()
   })
 
   it('returns normalized list, user, and bookmark feeds', async () => {
@@ -37,6 +41,8 @@ describe('source routes', () => {
     expect(userJson.statusMessages.source).toContain('@paulg')
     expect(bookmarksJson.items.length).toBe(2)
     expect(bookmarksJson.canLike).toBe(true)
+    expect(listJson.listenMode).toBe('authenticated')
+    expect(userJson.status).toBe('ok')
   })
 
   it('returns thread payloads for the demo shell', async () => {
