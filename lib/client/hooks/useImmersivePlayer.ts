@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { narrationChunks } from '@/app/lib/narration'
 import type { ApiCapabilities, MeResponse, NarrationTweet, PublicListenRequest, SourceResponse, SourceType } from '@/app/lib/types'
 import { parseConfirmation, parseVoiceIntent } from '@/app/lib/voiceIntents'
+import { saveRecentPublicSource } from '@/lib/client/public-source-history'
 import type { FeedItem, SourceConfig } from '@/lib/domain/entities'
 
 type PlayerState = 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ERROR'
@@ -209,6 +210,14 @@ export function useImmersivePlayer(data: MeResponse | null, initialPublicSource 
     const nextIndex = recoveredIndex >= 0 ? recoveredIndex : Math.min(priorSession?.currentIndex ?? 0, Math.max(payload.items.length - 1, 0))
     const nextNotice = payload.error?.message ?? payload.statusMessages.source
     updateFeedSession(sessionKey, () => createPlaybackSession(payload.items, nextIndex, payload.capabilities, nextNotice, payload.nextCursor, payload.items[nextIndex]?.id ?? priorSession?.lastPlayedTweetId ?? null))
+    if (payload.resolvedSource && (payload.status === 'ok' || payload.status === 'empty')) {
+      saveRecentPublicSource({
+        input: rawInput.trim(),
+        label: payload.resolvedSource.label,
+        kind: payload.resolvedSource.kind,
+        savedAt: new Date().toISOString(),
+      })
+    }
     setNotice(nextNotice)
     setMode('feed')
     setState(payload.status === 'ok' || payload.status === 'empty' ? 'PAUSED' : 'ERROR')

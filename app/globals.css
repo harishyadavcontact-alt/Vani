@@ -531,6 +531,10 @@ textarea {
   margin-top: 14px;
 }
 
+.public-listen-recents {
+  margin-top: 18px;
+}
+
 .source-tabs {
   flex-wrap: wrap;
   margin-top: 22px;

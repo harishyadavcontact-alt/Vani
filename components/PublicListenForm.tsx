@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { recentPublicSourcesEvent, readRecentPublicSources, type RecentPublicSource } from '@/lib/client/public-source-history'
 import { buildPublicListenHref } from '@/lib/client/public-listen'
 
 type Props = {
@@ -18,10 +19,24 @@ const examples = [
 export function PublicListenForm({ initialValue = '', compact = false }: Props) {
   const router = useRouter()
   const [value, setValue] = useState(initialValue)
+  const [recentSources, setRecentSources] = useState<RecentPublicSource[]>([])
 
   useEffect(() => {
     setValue(initialValue)
   }, [initialValue])
+
+  useEffect(() => {
+    const syncRecentSources = () => setRecentSources(readRecentPublicSources())
+
+    syncRecentSources()
+    window.addEventListener(recentPublicSourcesEvent, syncRecentSources)
+    window.addEventListener('storage', syncRecentSources)
+
+    return () => {
+      window.removeEventListener(recentPublicSourcesEvent, syncRecentSources)
+      window.removeEventListener('storage', syncRecentSources)
+    }
+  }, [])
 
   function submit(nextValue: string) {
     router.push(buildPublicListenHref(nextValue))
@@ -64,6 +79,26 @@ export function PublicListenForm({ initialValue = '', compact = false }: Props) 
           </button>
         ))}
       </div>
+      {recentSources.length ? (
+        <div className="public-listen-recents">
+          <div className="panel-kicker">Recent Sources</div>
+          <div className="public-listen-examples">
+            {recentSources.map((recent) => (
+              <button
+                key={`${recent.kind}-${recent.input}`}
+                type="button"
+                className="mini-pill"
+                onClick={() => {
+                  setValue(recent.input)
+                  submit(recent.input)
+                }}
+              >
+                {recent.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
