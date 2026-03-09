@@ -3,6 +3,7 @@
 import Image from 'next/image'
 import { useAppBootstrap } from '@/lib/client/hooks/useAppBootstrap'
 import { PublicListenForm } from '@/components/PublicListenForm'
+import { buildLoginUpgradeHref } from '@/lib/client/auth-upgrade'
 import { avatarSrc, sourceLabels, useImmersivePlayer, waveformHeights } from '@/lib/client/hooks/useImmersivePlayer'
 
 const rates = [1, 1.25, 1.5, 2]
@@ -20,6 +21,11 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
 
   const initials = player.current?.authorName ? player.initialsFor(player.current.authorName) : 'VA'
   const currentUserInitials = player.initialsFor(data?.user?.name ?? player.appState?.user?.name ?? 'Vani')
+  const sessionState = data?.sessionState ?? 'signed_out'
+  const authMode = data?.mode ?? 'oauth'
+  const isAnonymousSession = sessionState !== 'connected'
+  const upgradeHref = buildLoginUpgradeHref(player.publicSourceInput)
+  const upgradeLabel = authMode === 'demo' ? 'Unlock replies' : 'Connect X'
 
   if (loading) {
     return <div className="app-shell centered"><div className="hero-card"><h2>Bootstrapping Vani...</h2></div></div>
@@ -68,14 +74,17 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
           <div className="status-chip">db {player.appState.health.database}</div>
           <div className="status-chip">audio {player.appState.health.audio}</div>
         </div>
-        {data.sessionState !== 'connected' ? (
-          <div className="anonymous-banner">
-            <strong>Anonymous listening is open.</strong>
-            <p>Start with public sources now. Log in only when you want saved sources, sync, or replies.</p>
+        {isAnonymousSession ? (
+          <div className="upgrade-banner">
+            <div>
+              <strong>Anonymous listening stays fast.</strong>
+              <p>Upgrade only when you want to reply, save your queue, or carry this session across devices.</p>
+            </div>
+            <a className="cta" href={upgradeHref}>{upgradeLabel}</a>
           </div>
         ) : null}
         <PublicListenForm initialValue={player.publicSourceInput} compact />
-        {player.usingPublicSource && data.sessionState !== 'connected' ? (
+        {player.usingPublicSource && isAnonymousSession ? (
           <div className="notice-banner">
             Listening anonymously from <strong>{player.publicSourceInput}</strong>. Log in later for saved sources, sync, and replies.
           </div>
@@ -140,15 +149,26 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
             </div>
             <div className="progress-time"><span>{player.state === 'PLAYING' ? 'live' : 'paused'}</span><span>{player.current ? player.currentQueue.length : 0} loaded</span></div>
             <div className="source-tabs action-tabs">
-              <button className="tab" type="button" disabled={!player.activeCapabilities.canLike}>Like</button>
-              <button
-                className="tab"
-                type="button"
-                disabled={!player.activeCapabilities.canReply}
-                onClick={() => { player.setComposeState('DICTATING'); player.setReplyDraft('') }}
-              >
-                Reply
-              </button>
+              {player.activeCapabilities.canLike ? (
+                <button className="tab" type="button">Like</button>
+              ) : isAnonymousSession ? (
+                <a className="tab auth-tab" href={upgradeHref}>Log in to like</a>
+              ) : (
+                <button className="tab" type="button" disabled>Like</button>
+              )}
+              {player.activeCapabilities.canReply ? (
+                <button
+                  className="tab"
+                  type="button"
+                  onClick={() => { player.setComposeState('DICTATING'); player.setReplyDraft('') }}
+                >
+                  Reply
+                </button>
+              ) : isAnonymousSession ? (
+                <a className="tab auth-tab" href={upgradeHref}>Log in to reply</a>
+              ) : (
+                <button className="tab" type="button" disabled>Reply</button>
+              )}
               <button className="tab" type="button" onClick={() => player.openThread().catch(() => player.setState('ERROR'))}>Open Thread</button>
               {player.mode === 'thread' ? <button className="tab" type="button" onClick={player.exitThreadMode}>Back to Feed</button> : null}
             </div>
@@ -211,7 +231,7 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
                 className="composer cosmic-composer"
                 value={player.replyDraft}
                 onChange={(event) => player.setReplyDraft(event.target.value)}
-                placeholder={player.activeCapabilities.canReply ? 'Type a draft or use voice reply.' : 'Replies are unavailable on the current source.'}
+                placeholder={player.activeCapabilities.canReply ? 'Type a draft or use voice reply.' : isAnonymousSession ? 'Log in to reply and keep your draft synced across devices.' : 'Replies are unavailable on the current source.'}
                 disabled={!player.activeCapabilities.canReply}
               />
               <div className="signal-actions">
@@ -219,6 +239,12 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
                 <button className="tab" type="button" disabled={!player.replyDraft.trim() || !player.activeCapabilities.canReply} onClick={() => player.postReply(player.replyDraft).catch(() => undefined)}>Send</button>
                 <button className="tab" type="button" disabled={!player.replyDraft} onClick={() => { player.setReplyDraft(''); player.setComposeState('IDLE') }}>Clear</button>
               </div>
+              {isAnonymousSession ? (
+                <div className="upgrade-inline">
+                  <span>Unlock reply, save, and sync from this exact queue position.</span>
+                  <a className="mini-pill" href={upgradeHref}>{upgradeLabel}</a>
+                </div>
+              ) : null}
               <div className="progress-time">
                 <span>compose {player.composeState.toLowerCase()}</span>
                 <span>{player.appState.user?.handle ?? 'guest'}</span>
@@ -234,6 +260,16 @@ export function PlayerShell({ initialPublicSource = '' }: Props) {
                 <div className="signal-pill">mode {player.mode}</div>
               </div>
             </section>
+            {isAnonymousSession ? (
+              <section className="signal-card upgrade-card">
+                <div className="section-label">Upgrade Path</div>
+                <strong>Keep this session, then take it with you.</strong>
+                <p>Connect once to save sources, keep queue progress, and unlock replies without leaving the listening flow.</p>
+                <div className="signal-actions">
+                  <a className="cta" href={upgradeHref}>{upgradeLabel}</a>
+                </div>
+              </section>
+            ) : null}
           </section>
         </div>
       </main>

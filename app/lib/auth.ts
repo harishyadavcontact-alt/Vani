@@ -7,6 +7,7 @@ export const X_REFRESH_TOKEN_COOKIE_NAME = 'vani_x_refresh_token'
 export const X_ACCESS_TOKEN_EXPIRES_AT_COOKIE_NAME = 'vani_x_access_token_expires_at'
 export const X_OAUTH_STATE_COOKIE_NAME = 'vani_x_oauth_state'
 export const X_OAUTH_CODE_VERIFIER_COOKIE_NAME = 'vani_x_oauth_code_verifier'
+export const X_OAUTH_RETURN_TO_COOKIE_NAME = 'vani_x_oauth_return_to'
 
 export type PersistedAuthState = 'guest' | 'connected'
 export type AuthMode = 'demo' | 'oauth'
@@ -27,6 +28,7 @@ export type OAuthUserTokens = {
 export type OAuthFlowSession = {
   state: string
   codeVerifier: string
+  returnTo: string
 }
 
 export type AuthContext = {
@@ -185,23 +187,27 @@ export async function getOAuthFlowSession(): Promise<OAuthFlowSession | null> {
   const store = await cookies()
   const state = store.get(X_OAUTH_STATE_COOKIE_NAME)?.value
   const codeVerifier = store.get(X_OAUTH_CODE_VERIFIER_COOKIE_NAME)?.value
+  const returnTo = store.get(X_OAUTH_RETURN_TO_COOKIE_NAME)?.value ?? '/'
 
   if (!state || !codeVerifier) return null
 
   return {
     state,
     codeVerifier,
+    returnTo,
   }
 }
 
 export async function setOAuthFlowSession(session: OAuthFlowSession) {
   await setCookie(X_OAUTH_STATE_COOKIE_NAME, session.state)
   await setCookie(X_OAUTH_CODE_VERIFIER_COOKIE_NAME, session.codeVerifier)
+  await setCookie(X_OAUTH_RETURN_TO_COOKIE_NAME, session.returnTo)
 }
 
 export async function clearOAuthFlowSession() {
   await deleteCookie(X_OAUTH_STATE_COOKIE_NAME)
   await deleteCookie(X_OAUTH_CODE_VERIFIER_COOKIE_NAME)
+  await deleteCookie(X_OAUTH_RETURN_TO_COOKIE_NAME)
 }
 
 export async function setOAuthUserTokens(tokens: OAuthUserTokens) {

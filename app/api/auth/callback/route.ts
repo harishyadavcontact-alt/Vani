@@ -17,8 +17,9 @@ function getRedirectUri(request: Request) {
   return `${url.origin}/api/auth/callback`
 }
 
-function redirectToApp(request: Request, params: Record<string, string>) {
-  const target = new URL('/', request.url)
+function redirectToApp(request: Request, params: Record<string, string>, returnTo = '/') {
+  const safeReturnTo = returnTo.startsWith('/') && !returnTo.startsWith('//') ? returnTo : '/'
+  const target = new URL(safeReturnTo, request.url)
   for (const [key, value] of Object.entries(params)) {
     target.searchParams.set(key, value)
   }
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
     return redirectToApp(request, {
       auth_error: 'provider_error',
       message: providerErrorDescription || providerError,
-    })
+    }, flow?.returnTo)
   }
 
   if (!clientId) {
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
     return redirectToApp(request, {
       auth_error: 'oauth_config_missing',
       message: 'Missing X_CLIENT_ID.',
-    })
+    }, flow?.returnTo)
   }
 
   if (!code || !state || !flow) {
@@ -70,7 +71,7 @@ export async function GET(request: Request) {
     return redirectToApp(request, {
       auth_error: 'missing_callback_params',
       message: 'Missing OAuth callback parameters.',
-    })
+    }, flow?.returnTo)
   }
 
   if (state !== flow.state) {
@@ -80,7 +81,7 @@ export async function GET(request: Request) {
     return redirectToApp(request, {
       auth_error: 'invalid_state',
       message: 'OAuth state validation failed.',
-    })
+    }, flow.returnTo)
   }
 
   const tokenResponse = await fetch('https://api.x.com/2/oauth2/token', {
@@ -106,7 +107,7 @@ export async function GET(request: Request) {
     return redirectToApp(request, {
       auth_error: 'token_exchange_failed',
       message: payload?.error_description || payload?.error || 'Token exchange failed.',
-    })
+    }, flow.returnTo)
   }
 
   await setAuthState('connected')
@@ -117,5 +118,5 @@ export async function GET(request: Request) {
   })
   await clearOAuthFlowSession()
 
-  return redirectToApp(request, { auth: 'connected' })
+  return redirectToApp(request, { auth: 'connected' }, flow.returnTo)
 }

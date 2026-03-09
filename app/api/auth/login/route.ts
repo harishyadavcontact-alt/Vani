@@ -28,13 +28,25 @@ function getRedirectUri(request: Request) {
   return `${url.origin}/api/auth/callback`
 }
 
+function getReturnTo(request: Request) {
+  const url = new URL(request.url)
+  const returnTo = url.searchParams.get('returnTo')?.trim()
+
+  if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+    return '/'
+  }
+
+  return returnTo
+}
+
 export async function GET(request: Request) {
   const auth = await getAuthContext()
+  const returnTo = getReturnTo(request)
 
   if (auth.mode === 'demo') {
     await clearOAuthUserTokens()
     await setAuthState('connected')
-    return NextResponse.redirect(new URL('/', request.url))
+    return NextResponse.redirect(new URL(returnTo, request.url))
   }
 
   const clientId = process.env.X_CLIENT_ID?.trim()
@@ -65,7 +77,7 @@ export async function GET(request: Request) {
   await clearAuthState()
   await clearOAuthUserTokens()
   await clearOAuthFlowSession()
-  await setOAuthFlowSession({ state, codeVerifier })
+  await setOAuthFlowSession({ state, codeVerifier, returnTo })
 
   const authorizeUrl = new URL('https://x.com/i/oauth2/authorize')
   authorizeUrl.searchParams.set('response_type', 'code')

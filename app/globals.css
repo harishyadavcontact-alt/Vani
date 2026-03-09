@@ -490,6 +490,7 @@ textarea {
 }
 
 .anonymous-banner,
+.upgrade-banner,
 .public-listen {
   margin-top: 16px;
   border-radius: 22px;
@@ -499,8 +500,16 @@ textarea {
 }
 
 .anonymous-banner p,
+.upgrade-banner p,
 .public-listen p {
   margin: 8px 0 0;
+}
+
+.upgrade-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
 }
 
 .public-listen.compact {
@@ -553,6 +562,12 @@ textarea {
   color: var(--text);
   background: rgba(123, 224, 255, 0.14);
   border-color: rgba(123, 224, 255, 0.36);
+}
+
+.auth-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .content-grid {
@@ -753,6 +768,26 @@ textarea {
   flex-wrap: wrap;
 }
 
+.upgrade-inline {
+  margin-top: 14px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--muted);
+}
+
+.upgrade-card strong {
+  display: block;
+  margin-top: 14px;
+}
+
+.upgrade-card p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
 .player {
   position: fixed;
   left: 0;
@@ -815,6 +850,11 @@ textarea {
 @media (max-width: 640px) {
   .shell {
     padding-bottom: 210px;
+  }
+
+  .upgrade-banner {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .np-text {
